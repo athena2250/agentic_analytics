@@ -27,6 +27,12 @@ export async function runQuery(sid, query) {
   return r.json();
 }
 
+export async function getProfile(sid) {
+  const r = await fetch(`${BASE}/session/${sid}/profile`);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
 export async function exportLast(sid) {
   const r = await fetch(`${BASE}/session/${sid}/export`);
   if (!r.ok) throw new Error(await r.text());

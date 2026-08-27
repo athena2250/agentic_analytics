@@ -18,6 +18,8 @@ import tempfile
 import requests as http_requests
 
 import json
+import datetime
+import decimal
 import numpy as np
 import duckdb
 import pandas as pd
@@ -30,8 +32,8 @@ from pydantic import BaseModel
 sys.path.insert(0, os.path.dirname(__file__))
 
 from config import SPELL_CORRECTIONS, LLM_URL, LLM_MODEL, CACHE_TTL
-from predictor import predict_sales
-from loader import load_files, schema_summary, rich_schema_summary
+from predictor import predict_sales, infer_date_column, infer_measure_column
+from loader import load_files, schema_summary, rich_schema_summary, profile_tables, pick_default_columns
 from dateutil import parser as date_parser
 
 app = FastAPI(title="Agentic Analytics API")
@@ -47,8 +49,10 @@ app.add_middleware(
 
 class _Encoder(json.JSONEncoder):
     def default(self, obj):
-        if isinstance(obj, pd.Timestamp):
+        if isinstance(obj, (pd.Timestamp, datetime.date, datetime.datetime)):
             return obj.isoformat()
+        if isinstance(obj, decimal.Decimal):
+            return float(obj)
         if isinstance(obj, np.integer):
             return int(obj)
         if isinstance(obj, np.floating):
@@ -191,9 +195,10 @@ Return ONLY the corrected SQL, no explanation:"""
 
 def _fallback_sql(session: Session) -> str:
     tname = next(iter(session.tables))  # always a real table, not the view
-    cols = session.tables[tname]
-    if "revenue" in cols and "department" in cols:
-        return f"SELECT department, SUM(revenue) AS revenue FROM {tname} GROUP BY department"
+    picks = pick_default_columns(session.tables, session.con, tname)
+    measure, dimension = picks["measure"], picks["dimension"]
+    if measure and dimension:
+        return f'SELECT "{dimension}", SUM("{measure}") AS "{measure}" FROM {tname} GROUP BY "{dimension}"'
     return f"SELECT * FROM {tname} LIMIT 50"
 
 def _get_cached(session: Session, sql: str) -> pd.DataFrame | None:
@@ -203,9 +208,14 @@ def _get_cached(session: Session, sql: str) -> pd.DataFrame | None:
     return None
 
 def _enrich(df: pd.DataFrame) -> pd.DataFrame:
-    if {"date", "revenue"}.issubset(df.columns):
-        df = df.sort_values("date").copy()
-        df["moving_avg"] = df["revenue"].rolling(7).mean()
+    date_col = infer_date_column(df)
+    measure_col = infer_measure_column(df, exclude=date_col)
+    if date_col and measure_col:
+        df = df.copy()
+        df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+        df = df.sort_values(date_col)
+        df["moving_avg"] = df[measure_col].rolling(7).mean()
+        df.attrs["measure_col"] = measure_col
     return df
 
 def _trend(df: pd.DataFrame) -> str:
@@ -215,11 +225,13 @@ def _trend(df: pd.DataFrame) -> str:
     return "unknown"
 
 def _anomalies(df: pd.DataFrame) -> str:
-    if "revenue" in df.columns:
-        mean, std = df["revenue"].mean(), df["revenue"].std()
-        a = df[df["revenue"] > mean + 2 * std]
-        if not a.empty:
-            return a.head(5).to_string(index=False)
+    measure_col = df.attrs.get("measure_col") or infer_measure_column(df)
+    if measure_col:
+        mean, std = df[measure_col].mean(), df[measure_col].std()
+        if std and not np.isnan(std):
+            a = df[df[measure_col] > mean + 2 * std]
+            if not a.empty:
+                return a.head(5).to_string(index=False)
     return "No anomalies detected."
 
 def _insights(df: pd.DataFrame, query: str) -> str:
@@ -284,6 +296,15 @@ async def upload_files(sid: str, files: list[UploadFile] = File(...)):
 def get_schema(sid: str):
     session = get_session(sid)
     return {"tables": session.tables, "unified": session.unified}
+
+
+@app.get("/session/{sid}/profile")
+def get_profile(sid: str):
+    session = get_session(sid)
+    if not session.tables:
+        raise HTTPException(status_code=400, detail="No data loaded. Upload files first.")
+    profile = profile_tables(session.tables, session.con)
+    return _json({"tables": profile, "unified": session.unified})
 
 
 class QueryRequest(BaseModel):

@@ -164,6 +164,107 @@ def schema_summary(tables: dict[str, list[str]]) -> str:
     return "\n".join(lines)
 
 
+_DATE_TYPES = ("DATE", "TIMESTAMP")
+_NUMERIC_TYPES = ("TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT", "FLOAT", "DOUBLE", "DECIMAL", "REAL")
+_ID_NAME_RE = re.compile(r"(^|_)(id|uuid|guid|key)($|_)", re.IGNORECASE)
+_DATE_NAME_RE = re.compile(r"date|time|timestamp|_at$|_on$", re.IGNORECASE)
+
+
+def _classify_column(col: str, dtype: str, distinct_count: int, row_count: int) -> tuple[str, float]:
+    """Best-effort role classification: measure / dimension / date / identifier / unknown."""
+    dtype_u = dtype.upper()
+    is_unique = row_count > 0 and distinct_count >= row_count * 0.98
+
+    if any(dtype_u.startswith(t) for t in _DATE_TYPES):
+        return "date", 0.95
+    if _DATE_NAME_RE.search(col) and any(dtype_u.startswith(t) for t in _NUMERIC_TYPES + ("VARCHAR",)):
+        return "date", 0.5
+
+    if _ID_NAME_RE.search(col):
+        return "identifier", 0.7
+
+    if any(dtype_u.startswith(t) for t in _NUMERIC_TYPES):
+        return "measure", 0.85
+
+    if dtype_u.startswith("VARCHAR") or dtype_u.startswith("BOOLEAN"):
+        if is_unique and row_count > 1:
+            return "identifier", 0.5
+        return "dimension", 0.6
+
+    return "unknown", 0.2
+
+
+def profile_tables(tables: dict[str, list[str]], con: duckdb.DuckDBPyConnection) -> dict:
+    """
+    Compute per-table, per-column profiles via DuckDB aggregate queries
+    (no full data load into Python). Returns:
+        {table_name: {"row_count": int, "columns": [ {name, dtype, null_pct,
+            distinct_count, min, max, samples, role, confidence}, ... ]}}
+    """
+    profiles: dict = {}
+    for tname, cols in tables.items():
+        try:
+            desc = con.execute(f"DESCRIBE {tname}").fetchdf()
+            row_count = con.execute(f"SELECT COUNT(*) FROM {tname}").fetchone()[0]
+        except Exception:
+            continue
+
+        col_profiles = []
+        for _, row in desc.iterrows():
+            col, dtype = row["column_name"], row["column_type"]
+            quoted = f'"{col}"'
+            try:
+                stats = con.execute(
+                    f"SELECT COUNT(*) - COUNT({quoted}) AS nulls, "
+                    f"COUNT(DISTINCT {quoted}) AS distinct_count, "
+                    f"MIN({quoted}) AS min_val, MAX({quoted}) AS max_val "
+                    f"FROM {tname}"
+                ).fetchone()
+                nulls, distinct_count, min_val, max_val = stats
+                samples = [
+                    r[0] for r in con.execute(
+                        f"SELECT DISTINCT {quoted} FROM {tname} WHERE {quoted} IS NOT NULL LIMIT 3"
+                    ).fetchall()
+                ]
+            except Exception:
+                nulls, distinct_count, min_val, max_val, samples = None, None, None, None, []
+
+            role, confidence = _classify_column(col, dtype, distinct_count or 0, row_count)
+            col_profiles.append({
+                "name": col,
+                "dtype": dtype,
+                "null_pct": round(100 * nulls / row_count, 2) if row_count and nulls is not None else None,
+                "distinct_count": distinct_count,
+                "min": min_val,
+                "max": max_val,
+                "samples": samples,
+                "role": role,
+                "confidence": confidence,
+            })
+
+        profiles[tname] = {"row_count": row_count, "columns": col_profiles}
+
+    return profiles
+
+
+def pick_default_columns(tables: dict[str, list[str]], con: duckdb.DuckDBPyConnection, table_name: str) -> dict:
+    """
+    Best-effort default measure/dimension/date column picks for a single table,
+    used by fallback SQL generation. Returns {"measure": str|None, "dimension": str|None, "date": str|None}.
+    """
+    profile = profile_tables({table_name: tables[table_name]}, con).get(table_name, {})
+    picks = {"measure": None, "dimension": None, "date": None}
+    for col in profile.get("columns", []):
+        role = col["role"]
+        if role == "measure" and picks["measure"] is None:
+            picks["measure"] = col["name"]
+        elif role == "dimension" and picks["dimension"] is None:
+            picks["dimension"] = col["name"]
+        elif role == "date" and picks["date"] is None:
+            picks["date"] = col["name"]
+    return picks
+
+
 def rich_schema_summary(tables: dict[str, list[str]], con: duckdb.DuckDBPyConnection) -> str:
     """
     Richer schema string including data types and sample values.

@@ -3,7 +3,7 @@ import {
   Upload, FileText, ChevronDown, ChevronRight,
   Plus, MessageSquare, Pencil, Check, Trash2, Database
 } from "lucide-react";
-import { uploadFiles } from "../api.js";
+import DatasetSummaryCard from "./DatasetSummaryCard.jsx";
 
 const ACCEPTED = ".csv,.tsv,.txt,.parquet,.json,.ndjson,.jsonl,.xlsx,.xls,.xlsm,.orc,.avro";
 
@@ -17,59 +17,27 @@ function formatSize(bytes) {
 
 export default function LeftPanel({
   sessions, activeId, activeSession,
-  onSelect, onNew, onRename, onSessionUpdate
+  onSelect, onNew, onRename, onUpload, uploading
 }) {
   const [filesOpen, setFilesOpen] = useState(true);
   const [chatsOpen, setChatsOpen] = useState(true);
   const [dragging, setDragging] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [draft, setDraft] = useState("");
   const inputRef = useRef();
 
   const uploadedFiles = activeSession?.uploadedFiles ?? [];
 
-  const handleDrop = async (e) => {
+  const handleDrop = (e) => {
     e.preventDefault();
     setDragging(false);
     if (!activeSession) return;
-    await doUpload(Array.from(e.dataTransfer.files));
+    onUpload(Array.from(e.dataTransfer.files));
   };
 
-  const handleBrowse = async (e) => {
-    if (!activeSession) return;
-    await doUpload(Array.from(e.target.files));
+  const handleBrowse = (e) => {
+    if (activeSession) onUpload(Array.from(e.target.files));
     e.target.value = "";
-  };
-
-  const doUpload = async (files) => {
-    if (!files.length || !activeSession) return;
-    setUploading(true);
-    try {
-      const result = await uploadFiles(activeSession.id, files);
-      const newFiles = files.map((f) => ({ name: f.name, size: f.size }));
-      onSessionUpdate({
-        tables: { ...activeSession.tables, ...result.tables },
-        unified: result.unified ?? activeSession.unified,
-        uploadedFiles: [...uploadedFiles, ...newFiles],
-        messages: [
-          ...activeSession.messages,
-          {
-            id: Date.now(),
-            role: "assistant",
-            sql: null,
-            rows: result.sample,
-            columns: result.sample?.length ? Object.keys(result.sample[0]) : [],
-            total_rows: result.sample?.length ?? 0,
-            text: `Loaded **${files.map((f) => f.name).join(", ")}**. ${Object.keys(result.tables).length} table(s) ready.`,
-          },
-        ],
-      });
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setUploading(false);
-    }
   };
 
   const startEdit = (e, s) => {
@@ -151,6 +119,9 @@ export default function LeftPanel({
           </div>
         )}
       </div>
+
+      {/* ══ DATASET SUMMARY ══ */}
+      {activeSession?.profile && <DatasetSummaryCard profile={activeSession.profile} />}
 
       {/* ══ TABLES SECTION ══ */}
       {activeSession && Object.keys(activeSession.tables).length > 0 && (
