@@ -4,7 +4,7 @@ import ChatWindow from "./components/ChatWindow.jsx";
 import CodePanel from "./components/CodePanel.jsx";
 import EmptyState from "./components/EmptyState.jsx";
 import UploadIntentDialog from "./components/UploadIntentDialog.jsx";
-import { createSession, uploadFiles, getProfile, exportLast } from "./api.js";
+import { createSession, uploadFiles, getProfile, exportLast, getFormats } from "./api.js";
 
 // A session holding a dataset takes that dataset's name, so the sessions list
 // reads as a list of datasets (plan §13.11). User renames always win.
@@ -22,7 +22,14 @@ export default function App() {
   const [activeSQL, setActiveSQL] = useState("");
   const [activeMeta, setActiveMeta] = useState(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [uploading, setUploading] = useState(false);
+  // Which real backend round trip is currently in flight: "uploading" (POST
+  // /upload) → "profiling" (GET /profile) → "ready", or null when idle. Drives
+  // UploadProgress; every stage maps to an actual await (plan §6, §10).
+  const [uploadStage, setUploadStage] = useState(null);
+  const [uploadError, setUploadError] = useState(null);
+  // Supported file extensions, read from the backend's loader rather than
+  // hardcoded, so the UI can't advertise a format uploads would reject (§6).
+  const [formats, setFormats] = useState(null);
   // Files dropped into a session that already holds a dataset — held here
   // until the user says whether they extend it or belong to a new one.
   const [pendingUpload, setPendingUpload] = useState(null);
@@ -67,13 +74,32 @@ export default function App() {
 
   useEffect(() => { startSession(); }, []);
 
+  useEffect(() => {
+    getFormats().then(setFormats).catch((e) => {
+      // Leave `formats` null — the upload targets then say nothing about
+      // supported formats rather than guessing at a list (plan §1).
+      console.error("format list fetch failed", e);
+    });
+  }, []);
+
   const active = sessions.find((s) => s.id === activeId) ?? null;
+
+  // "ready" is terminal — dismiss it once shown. (Dismissing a finished
+  // indicator, not animating work that isn't happening.)
+  useEffect(() => {
+    if (uploadStage !== "ready") return;
+    const t = setTimeout(() => { setUploadStage(null); setUploadError(null); }, 2500);
+    return () => clearTimeout(t);
+  }, [uploadStage]);
+
+  const uploading = uploadStage === "uploading" || uploadStage === "profiling";
 
   // Runs the actual upload against a known session id. Every session update is
   // a functional one — the target session may have been created moments ago
   // and not yet be reflected in `active`.
   const performUpload = useCallback(async (sessionId, files) => {
-    setUploading(true);
+    setUploadError(null);
+    setUploadStage("uploading");
     try {
       const result = await uploadFiles(sessionId, files);
       const newFiles = files.map((f) => ({ name: f.name, size: f.size }));
@@ -101,16 +127,22 @@ export default function App() {
           ],
         };
       });
+      setUploadStage("profiling");
       try {
         const profile = await getProfile(sessionId);
         patchSession(sessionId, { profile });
       } catch (e) {
+        // The data is loaded and queryable; only the profile-derived extras
+        // (summary card, suggestions) are missing. Say so rather than
+        // reporting the whole upload as failed.
         console.error("profile fetch failed", e);
+        setUploadError("Loaded, but column profiling failed — summary and suggestions are unavailable.");
       }
+      setUploadStage("ready");
     } catch (err) {
       console.error(err);
-    } finally {
-      setUploading(false);
+      setUploadStage(null);
+      setUploadError(err.message || "Upload failed.");
     }
   }, [patchSession]);
 
@@ -152,6 +184,9 @@ export default function App() {
         onRename={(id, name) => patchSession(id, { name, renamed: true })}
         onUpload={handleUpload}
         uploading={uploading}
+        uploadStage={uploadStage}
+        uploadError={uploadError}
+        formats={formats}
       />
 
       {/* ── Middle: Chat ── */}
@@ -159,7 +194,12 @@ export default function App() {
         {!active ? (
           <div style={styles.empty}>Select or start a session</div>
         ) : Object.keys(active.tables).length === 0 ? (
-          <EmptyState onUpload={handleUpload} uploading={uploading} />
+          <EmptyState
+            onUpload={handleUpload}
+            uploadStage={uploadStage}
+            uploadError={uploadError}
+            formats={formats}
+          />
         ) : (
           <ChatWindow
             key={active.id}

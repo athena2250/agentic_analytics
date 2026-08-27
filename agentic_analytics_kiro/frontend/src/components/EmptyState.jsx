@@ -1,15 +1,14 @@
 import { useRef, useState } from "react";
 import { UploadCloud } from "lucide-react";
+import UploadProgress from "./UploadProgress.jsx";
 
-const ACCEPTED = ".csv,.tsv,.txt,.parquet,.json,.ndjson,.jsonl,.xlsx,.xls,.xlsm,.orc,.avro";
-
-const FORMATS = [
-  "CSV", "TSV", "TXT", "Parquet", "JSON", "NDJSON", "JSONL", "ORC", "Avro", "XLSX", "XLS", "XLSM",
-];
-
-export default function EmptyState({ onUpload, uploading }) {
+// `formats` comes from GET /formats, which derives it from loader.py's reader
+// tables (plan §6) — nothing here is hardcoded. While it is null the format
+// line is omitted rather than guessed at.
+export default function EmptyState({ onUpload, uploadStage, uploadError, formats }) {
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef();
+  const accepted = formats?.map((f) => `.${f}`).join(",");
 
   const handleDrop = (e) => {
     e.preventDefault();
@@ -30,25 +29,35 @@ export default function EmptyState({ onUpload, uploading }) {
           Upload any file below — no schema, template, or setup required.
         </p>
 
-        <div
-          style={{ ...styles.dropzone, ...(dragging ? styles.dropzoneActive : {}) }}
-          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={handleDrop}
-          onClick={() => inputRef.current?.click()}
-        >
-          <UploadCloud size={28} color="var(--accent)" />
-          <span style={styles.dropzoneText}>
-            {uploading ? "Uploading…" : "Drop files here or click to browse"}
-          </span>
-          <span style={styles.formats}>{FORMATS.join(" · ")}</span>
-        </div>
+        {uploadStage ? (
+          <UploadProgress stage={uploadStage} error={uploadError} />
+        ) : (
+          <div
+            style={{ ...styles.dropzone, ...(dragging ? styles.dropzoneActive : {}) }}
+            onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={handleDrop}
+            onClick={() => inputRef.current?.click()}
+          >
+            <UploadCloud size={28} color="var(--accent)" />
+            <span style={styles.dropzoneText}>Drop files here or click to browse</span>
+            {formats?.length > 0 && (
+              <span style={styles.formats}>
+                {formats.map((f) => f.toUpperCase()).join(" · ")}
+              </span>
+            )}
+          </div>
+        )}
+
+        {!uploadStage && uploadError && (
+          <p style={styles.error}>{uploadError}</p>
+        )}
 
         <input
           ref={inputRef}
           type="file"
           multiple
-          accept={ACCEPTED}
+          {...(accepted ? { accept: accepted } : {})}
           style={{ display: "none" }}
           onChange={handleBrowse}
         />
@@ -106,4 +115,5 @@ const styles = {
   },
   dropzoneText: { fontSize: 13, color: "var(--text)", fontWeight: 500 },
   formats: { fontSize: 11, color: "var(--text-muted)" },
+  error: { fontSize: 12, color: "#d9534f", marginTop: 12, lineHeight: 1.5 },
 };

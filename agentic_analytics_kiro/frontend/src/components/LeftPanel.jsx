@@ -4,8 +4,7 @@ import {
   Plus, MessageSquare, Pencil, Check, Trash2, Database
 } from "lucide-react";
 import DatasetSummaryCard from "./DatasetSummaryCard.jsx";
-
-const ACCEPTED = ".csv,.tsv,.txt,.parquet,.json,.ndjson,.jsonl,.xlsx,.xls,.xlsm,.orc,.avro";
+import UploadProgress from "./UploadProgress.jsx";
 
 function formatSize(bytes) {
   if (!bytes) return "";
@@ -25,8 +24,12 @@ function datasetLabel(session) {
 
 export default function LeftPanel({
   sessions, activeId, activeSession,
-  onSelect, onNew, onRename, onUpload, uploading
+  onSelect, onNew, onRename, onUpload, uploading,
+  uploadStage, uploadError, formats
 }) {
+  // Accepted extensions come from GET /formats (derived from loader.py's
+  // readers), so the picker can't offer a format the backend would reject (§6).
+  const accepted = formats?.map((f) => `.${f}`).join(",");
   const [filesOpen, setFilesOpen] = useState(true);
   const [chatsOpen, setChatsOpen] = useState(true);
   const [dragging, setDragging] = useState(false);
@@ -92,17 +95,18 @@ export default function LeftPanel({
         {filesOpen && (
           <div style={styles.sectionBody}>
             {/* Drop hint when empty */}
-            {uploadedFiles.length === 0 && (
+            {uploadedFiles.length === 0 && !uploadStage && (
               <div
                 style={styles.dropHint}
                 onClick={() => inputRef.current?.click()}
               >
                 <Upload size={14} color="var(--text-muted)" />
-                <span style={styles.dropHintText}>
-                  {uploading ? "Uploading…" : "Drop files or click to upload"}
-                </span>
+                <span style={styles.dropHintText}>Drop files or click to upload</span>
               </div>
             )}
+
+            {/* Real per-request progress, not a spinner (plan §6, §10) */}
+            <UploadProgress stage={uploadStage} error={uploadError} compact />
 
             {/* File list */}
             {uploadedFiles.map((f) => (
@@ -122,7 +126,7 @@ export default function LeftPanel({
                   disabled={uploading}
                 >
                   <Upload size={11} />
-                  {uploading ? "Uploading…" : "Add to this dataset"}
+                  Add to this dataset
                 </button>
                 <button style={styles.newDatasetHint} onClick={onNew}>
                   Different data? Start a new session
@@ -222,7 +226,7 @@ export default function LeftPanel({
         ref={inputRef}
         type="file"
         multiple
-        accept={ACCEPTED}
+        {...(accepted ? { accept: accepted } : {})}
         style={{ display: "none" }}
         onChange={handleBrowse}
       />

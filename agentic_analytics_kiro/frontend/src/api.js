@@ -1,5 +1,12 @@
 const BASE = "";
 
+export async function getFormats() {
+  const r = await fetch(`${BASE}/formats`);
+  if (!r.ok) throw new Error(await r.text());
+  const { formats } = await r.json();
+  return formats;
+}
+
 export async function createSession() {
   const r = await fetch(`${BASE}/session`, { method: "POST" });
   return r.json();

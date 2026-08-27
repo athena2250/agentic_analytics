@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from config import SPELL_CORRECTIONS, LLM_URL, LLM_MODEL, CACHE_TTL
 from predictor import predict_sales, infer_date_column, infer_measure_column
-from loader import load_files, schema_summary, rich_schema_summary, profile_tables, pick_default_columns
+from loader import load_files, schema_summary, rich_schema_summary, profile_tables, pick_default_columns, supported_formats
 from dateutil import parser as date_parser
 
 app = FastAPI(title="Agentic Analytics API")
@@ -247,6 +247,16 @@ def _insights(df: pd.DataFrame, query: str) -> str:
     return _llm(prompt)
 
 # ── Routes ────────────────────────────────────────────────────────────────────
+
+@app.get("/formats")
+def get_formats():
+    """
+    File extensions the loader can actually ingest. The UI reads its
+    upload-target format list from here rather than hardcoding one, so the
+    two can never drift apart (plan §6).
+    """
+    return {"formats": supported_formats()}
+
 
 @app.post("/session")
 def create_session():

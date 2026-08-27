@@ -156,6 +156,16 @@ def _build_unified_view(tables: dict[str, list[str]], con: duckdb.DuckDBPyConnec
     return "all_data"
 
 
+def supported_formats() -> list[str]:
+    """
+    Extensions this loader can actually ingest, derived from the reader tables
+    themselves so the UI never advertises a format load_files() would reject
+    (plan §6). Returned without the leading dot, in a stable order.
+    """
+    exts = sorted(_READERS) + sorted(_EXCEL_EXTS)
+    return [e.lstrip(".") for e in exts]
+
+
 def schema_summary(tables: dict[str, list[str]]) -> str:
     """Human-readable schema string for LLM prompts."""
     lines = []
