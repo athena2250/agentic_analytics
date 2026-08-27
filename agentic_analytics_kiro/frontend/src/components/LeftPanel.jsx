@@ -15,6 +15,14 @@ function formatSize(bytes) {
   return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 }
 
+// One session = one dataset, so each row says which dataset it holds.
+function datasetLabel(session) {
+  const tables = Object.keys(session.tables ?? {}).length;
+  const files = session.uploadedFiles?.length ?? 0;
+  if (!files) return "No dataset yet";
+  return `${tables} table${tables === 1 ? "" : "s"} · ${files} file${files === 1 ? "" : "s"}`;
+}
+
 export default function LeftPanel({
   sessions, activeId, activeSession,
   onSelect, onNew, onRename, onUpload, uploading
@@ -71,10 +79,10 @@ export default function LeftPanel({
       <div style={styles.section}>
         <button style={styles.sectionHeader} onClick={() => setFilesOpen((v) => !v)}>
           {filesOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-          <span style={styles.sectionTitle}>Files</span>
+          <span style={styles.sectionTitle}>Dataset files</span>
           <button
             style={styles.addBtn}
-            title="Upload files"
+            title="Add files to this dataset"
             onClick={(e) => { e.stopPropagation(); inputRef.current?.click(); }}
           >
             <Upload size={12} />
@@ -105,16 +113,21 @@ export default function LeftPanel({
               </div>
             ))}
 
-            {/* Upload more button when files exist */}
+            {/* Upload more, plus the explicit route for unrelated data */}
             {uploadedFiles.length > 0 && (
-              <button
-                style={styles.uploadMoreBtn}
-                onClick={() => inputRef.current?.click()}
-                disabled={uploading}
-              >
-                <Upload size={11} />
-                {uploading ? "Uploading…" : "Add more files"}
-              </button>
+              <>
+                <button
+                  style={styles.uploadMoreBtn}
+                  onClick={() => inputRef.current?.click()}
+                  disabled={uploading}
+                >
+                  <Upload size={11} />
+                  {uploading ? "Uploading…" : "Add to this dataset"}
+                </button>
+                <button style={styles.newDatasetHint} onClick={onNew}>
+                  Different data? Start a new session
+                </button>
+              </>
             )}
           </div>
         )}
@@ -148,10 +161,10 @@ export default function LeftPanel({
       <div style={{ ...styles.section, flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
         <button style={styles.sectionHeader} onClick={() => setChatsOpen((v) => !v)}>
           {chatsOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-          <span style={styles.sectionTitle}>Chats</span>
+          <span style={styles.sectionTitle}>Sessions</span>
           <button
             style={styles.addBtn}
-            title="New chat"
+            title="New session — a clean slate for a different dataset"
             onClick={(e) => { e.stopPropagation(); onNew(); }}
           >
             <Plus size={12} />
@@ -182,7 +195,10 @@ export default function LeftPanel({
                     onClick={(e) => e.stopPropagation()}
                   />
                 ) : (
-                  <span style={styles.chatName}>{s.name}</span>
+                  <div style={styles.chatMeta}>
+                    <span style={styles.chatName}>{s.name}</span>
+                    <span style={styles.chatDataset}>{datasetLabel(s)}</span>
+                  </div>
                 )}
 
                 {s.id === activeId && editingId !== s.id && (
@@ -325,6 +341,17 @@ const styles = {
     width: "100%",
     justifyContent: "center",
   },
+  newDatasetHint: {
+    background: "none",
+    border: "none",
+    color: "var(--text-muted)",
+    fontSize: 10.5,
+    padding: "3px 4px 0",
+    textAlign: "center",
+    width: "100%",
+    textDecoration: "underline",
+    textUnderlineOffset: 2,
+  },
   tableRow: {
     display: "flex",
     alignItems: "center",
@@ -366,8 +393,21 @@ const styles = {
     background: "var(--surface2)",
     color: "var(--text)",
   },
-  chatName: {
+  chatMeta: {
     flex: 1,
+    display: "flex",
+    flexDirection: "column",
+    minWidth: 0,
+    gap: 1,
+  },
+  chatName: {
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  chatDataset: {
+    fontSize: 10,
+    color: "var(--text-muted)",
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
