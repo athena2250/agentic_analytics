@@ -3,14 +3,29 @@ import LeftPanel from "./components/LeftPanel.jsx";
 import ChatWindow from "./components/ChatWindow.jsx";
 import CodePanel from "./components/CodePanel.jsx";
 import EmptyState from "./components/EmptyState.jsx";
-import { createSession, uploadFiles, getProfile } from "./api.js";
+import { createSession, uploadFiles, getProfile, exportLast } from "./api.js";
 
 export default function App() {
   const [sessions, setSessions] = useState([]);
   const [activeId, setActiveId] = useState(null);
-  // The SQL shown in the right code panel — updated when user clicks a message
+  // Technical Details drawer: the SQL + execution meta of the message last
+  // inspected. Collapsed by default — opened per-message (plan §7).
   const [activeSQL, setActiveSQL] = useState("");
+  const [activeMeta, setActiveMeta] = useState(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
+
+  const resetTechnical = useCallback(() => {
+    setActiveSQL("");
+    setActiveMeta(null);
+    setDrawerOpen(false);
+  }, []);
+
+  const openTechnical = useCallback((sql, meta, open = true) => {
+    setActiveSQL(sql ?? "");
+    setActiveMeta(meta ?? null);
+    if (open) setDrawerOpen(true);
+  }, []);
 
   useEffect(() => { handleNewSession(); }, []);
 
@@ -27,8 +42,8 @@ export default function App() {
     };
     setSessions((prev) => [...prev, { ...session, name: `Chat ${prev.length + 1}` }]);
     setActiveId(session_id);
-    setActiveSQL("");
-  }, []);
+    resetTechnical();
+  }, [resetTechnical]);
 
   const updateSession = useCallback((id, patch) => {
     setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
@@ -79,7 +94,7 @@ export default function App() {
         sessions={sessions}
         activeId={activeId}
         activeSession={active}
-        onSelect={(id) => { setActiveId(id); setActiveSQL(""); }}
+        onSelect={(id) => { setActiveId(id); resetTechnical(); }}
         onNew={handleNewSession}
         onRename={(id, name) => updateSession(id, { name })}
         onUpload={handleUpload}
@@ -97,13 +112,20 @@ export default function App() {
             key={active.id}
             session={active}
             onUpdate={(patch) => updateSession(active.id, patch)}
-            onSQLClick={setActiveSQL}
+            onOpenTechnical={openTechnical}
           />
         )}
       </div>
 
-      {/* ── Right: Code panel ── */}
-      <CodePanel sql={activeSQL} onSQLChange={setActiveSQL} />
+      {/* ── Right: Technical details drawer ── */}
+      <CodePanel
+        sql={activeSQL}
+        meta={activeMeta}
+        open={drawerOpen}
+        onToggle={() => setDrawerOpen((v) => !v)}
+        onSQLChange={setActiveSQL}
+        onExport={active ? () => exportLast(active.id) : null}
+      />
     </div>
   );
 }

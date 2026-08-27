@@ -1,10 +1,19 @@
-import { useState } from "react";
 import ResultTable from "./ResultTable.jsx";
-import { Database, User, TrendingUp, Lightbulb, Code2, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
+import FindingsBlock, { deriveKPIs } from "./FindingsBlock.jsx";
+import { Database, User, TrendingUp, SlidersHorizontal, Inbox, Loader2 } from "lucide-react";
 
-export default function MessageBubble({ msg, onSQLClick }) {
+export default function MessageBubble({ msg, onOpenTechnical }) {
   const isUser = msg.role === "user";
-  const [sqlOpen, setSqlOpen] = useState(false);
+
+  // Findings are derived from the result's shape only — never from column names.
+  const kpis = deriveKPIs(msg.columns, msg.rows);
+  const kpiLabels = new Set(kpis.map((k) => k.label));
+  // If every column is already shown as a KPI, the 1-row table would just repeat it.
+  const tableAddsInfo =
+    msg.columns?.length > 0 &&
+    msg.rows?.length > 0 &&
+    !msg.columns.every((c) => kpiLabels.has(c));
+  const isEmptyResult = msg.columns?.length > 0 && msg.rows?.length === 0;
 
   return (
     <div style={{ ...styles.row, ...(isUser ? styles.rowUser : styles.rowAI) }}>
@@ -30,31 +39,14 @@ export default function MessageBubble({ msg, onSQLClick }) {
               </div>
             )}
 
-            {/* Plain text (e.g. file loaded message) */}
+            {/* ── 1. Narrative: the answer, stated first ── */}
             {msg.text && <p style={styles.aiText}>{msg.text}</p>}
 
-            {/* SQL toggle — clicking also pushes to code panel */}
-            {msg.sql && (
-              <div style={styles.sqlBlock}>
-                <button
-                  style={styles.sqlToggle}
-                  onClick={() => {
-                    setSqlOpen((v) => !v);
-                    onSQLClick?.(msg.sql);
-                  }}
-                >
-                  <Code2 size={12} />
-                  <span>SQL</span>
-                  {sqlOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-                </button>
-                {sqlOpen && (
-                  <pre style={styles.sqlPre}>{msg.sql}</pre>
-                )}
-              </div>
-            )}
+            {/* ── 2. Findings: insight narrative + KPI cards ── */}
+            <FindingsBlock narrative={msg.insights ?? null} kpis={kpis} />
 
-            {/* Data table */}
-            {msg.columns?.length > 0 && msg.rows?.length > 0 && (
+            {/* ── 3. Supporting data ── */}
+            {tableAddsInfo && (
               <div style={styles.section}>
                 <ResultTable
                   columns={msg.columns}
@@ -64,7 +56,17 @@ export default function MessageBubble({ msg, onSQLClick }) {
               </div>
             )}
 
-            {/* Forecast */}
+            {/* Empty result is a valid answer, not an error (plan §13.9). */}
+            {isEmptyResult && (
+              <div style={styles.emptyResult}>
+                <Inbox size={14} color="var(--text-muted)" />
+                <span>
+                  The query ran successfully but matched no rows. Try widening the
+                  time range or filters.
+                </span>
+              </div>
+            )}
+
             {msg.forecast?.length > 0 && (
               <div style={styles.section}>
                 <div style={styles.sectionLabel}>
@@ -79,19 +81,20 @@ export default function MessageBubble({ msg, onSQLClick }) {
               </div>
             )}
 
-            {/* Insights */}
-            {msg.insights && (
-              <div style={styles.section}>
-                <div style={styles.sectionLabel}>
-                  <Lightbulb size={12} />
-                  Insights
-                </div>
-                <p style={styles.insightText}>{msg.insights}</p>
-              </div>
-            )}
-
             {/* Error */}
             {msg.error && <p style={styles.error}>{msg.error}</p>}
+
+            {/* ── 4. Technical detail: last, and behind one click (plan §6, §7) ── */}
+            {msg.sql && (
+              <button
+                style={styles.techToggle}
+                onClick={() => onOpenTechnical?.(msg)}
+                title="Show the SQL and execution detail for this answer"
+              >
+                <SlidersHorizontal size={12} />
+                <span>Technical details</span>
+              </button>
+            )}
           </>
         )}
       </div>
@@ -160,12 +163,11 @@ const styles = {
     color: "var(--text-muted)",
   },
   spinner: { animation: "spin 1s linear infinite", flexShrink: 0 },
-  sqlBlock: { display: "flex", flexDirection: "column", gap: 0 },
-  sqlToggle: {
+  techToggle: {
     display: "inline-flex",
     alignItems: "center",
     gap: 5,
-    background: "var(--surface2)",
+    background: "none",
     border: "1px solid var(--border)",
     color: "var(--text-muted)",
     borderRadius: 6,
@@ -174,19 +176,6 @@ const styles = {
     fontWeight: 500,
     cursor: "pointer",
     alignSelf: "flex-start",
-  },
-  sqlPre: {
-    marginTop: 6,
-    background: "var(--surface2)",
-    border: "1px solid var(--border)",
-    borderRadius: 8,
-    padding: "10px 12px",
-    overflowX: "auto",
-    color: "#5a6a8a",
-    lineHeight: 1.6,
-    fontSize: 12,
-    fontFamily: "var(--mono)",
-    whiteSpace: "pre",
   },
   section: { display: "flex", flexDirection: "column", gap: 5 },
   sectionLabel: {
@@ -199,11 +188,17 @@ const styles = {
     textTransform: "uppercase",
     letterSpacing: "0.04em",
   },
-  insightText: {
+  emptyResult: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 7,
+    background: "var(--surface2)",
+    border: "1px solid var(--border)",
+    borderRadius: 8,
+    padding: "10px 12px",
     fontSize: 13,
-    lineHeight: 1.7,
     color: "var(--text-soft)",
-    whiteSpace: "pre-wrap",
+    lineHeight: 1.6,
   },
   error: { color: "#d94f4f", fontSize: 13 },
 };

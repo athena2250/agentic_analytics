@@ -4,7 +4,17 @@ import MessageBubble from "./MessageBubble.jsx";
 import SuggestedQuestions from "./SuggestedQuestions.jsx";
 import { runQuery } from "../api.js";
 
-export default function ChatWindow({ session, onUpdate, onSQLClick }) {
+// Which of the session's known tables this SQL actually names. Derived by
+// matching real table names against the SQL text — never a hardcoded name.
+function tablesReferenced(sql, tableNames) {
+  if (!sql || !tableNames?.length) return [];
+  return tableNames.filter((t) => {
+    const esc = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|[^\\w"])"?${esc}"?($|[^\\w"])`, "i").test(sql);
+  });
+}
+
+export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef();
@@ -23,6 +33,20 @@ export default function ChatWindow({ session, onUpdate, onSQLClick }) {
 
   const hasData = Object.keys(session.tables).length > 0;
 
+  // Meta is derived from the /query response plus the SQL text — no invented fields.
+  const openTechnical = (msg, open = true) => {
+    onOpenTechnical?.(
+      msg.sql,
+      {
+        intent: msg.intent ?? null,
+        totalRows: msg.total_rows,
+        durationMs: msg.durationMs,
+        tables: tablesReferenced(msg.sql, Object.keys(session.tables)),
+      },
+      open
+    );
+  };
+
   const send = async () => {
     const q = input.trim();
     if (!q || loading) return;
@@ -35,6 +59,7 @@ export default function ChatWindow({ session, onUpdate, onSQLClick }) {
     setInput("");
     setLoading(true);
 
+    const startedAt = performance.now();
     try {
       const data = await runQuery(session.id, q);
       const aiMsg = {
@@ -47,11 +72,16 @@ export default function ChatWindow({ session, onUpdate, onSQLClick }) {
         total_rows: data.total_rows,
         forecast: data.forecast ?? null,
         insights: data.insights ?? null,
+        intent: data.intent ?? null,
+        // Client-measured round trip — the backend does not report its own
+        // execution time, so this is labeled as a round trip, not query time.
+        durationMs: performance.now() - startedAt,
         text: null,
       };
       onUpdate({ messages: [...session.messages, userMsg, aiMsg] });
-      // Push SQL to code panel automatically
-      if (data.sql) onSQLClick(data.sql);
+      // Load the drawer with this answer's detail, but leave it collapsed:
+      // the answer is primary, technical detail is on demand (plan §6).
+      if (data.sql) openTechnical(aiMsg, false);
     } catch (e) {
       onUpdate({
         messages: [
@@ -108,7 +138,7 @@ export default function ChatWindow({ session, onUpdate, onSQLClick }) {
           <MessageBubble
             key={msg.id}
             msg={msg}
-            onSQLClick={onSQLClick}
+            onOpenTechnical={openTechnical}
           />
         ))}
         <div ref={bottomRef} style={{ height: 1 }} />
