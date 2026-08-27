@@ -7,6 +7,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/session": "http://localhost:8000",
+      "/formats": "http://localhost:8000",
     },
   },
 });

@@ -120,6 +120,10 @@ export default function App() {
               rows: result.sample,
               columns: result.sample?.length ? Object.keys(result.sample[0]) : [],
               total_rows: result.sample?.length ?? 0,
+              // These rows are the loader's head() sample, not a result set.
+              // Charting them would draw a "trend" out of the first few rows
+              // of the file — a shape that isn't in the data.
+              preview: true,
               text: extending
                 ? `Added **${names}** to this dataset. ${Object.keys(result.tables).length} table(s) ready — queries now cover every table in this session.`
                 : `Loaded **${names}**. ${Object.keys(result.tables).length} table(s) ready.`,

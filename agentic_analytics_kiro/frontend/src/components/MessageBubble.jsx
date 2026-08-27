@@ -1,4 +1,5 @@
 import ResultTable from "./ResultTable.jsx";
+import ResultChart from "./ResultChart.jsx";
 import FindingsBlock, { deriveKPIs } from "./FindingsBlock.jsx";
 import { Database, User, TrendingUp, SlidersHorizontal, Inbox, Loader2 } from "lucide-react";
 
@@ -45,7 +46,19 @@ export default function MessageBubble({ msg, onOpenTechnical }) {
             {/* ── 2. Findings: insight narrative + KPI cards ── */}
             <FindingsBlock narrative={msg.insights ?? null} kpis={kpis} />
 
-            {/* ── 3. Supporting data ── */}
+            {/* ── 3. Chart, when the result's shape supports one. Never for an
+                   upload preview, whose rows are a file sample rather than an
+                   answer. The table below always stays: the chart never
+                   becomes the only way to read a value. ── */}
+            {!msg.preview && (
+              <ResultChart
+                columns={msg.columns}
+                rows={msg.rows}
+                totalRows={msg.total_rows}
+              />
+            )}
+
+            {/* ── 4. Supporting data ── */}
             {tableAddsInfo && (
               <div style={styles.section}>
                 <ResultTable
@@ -73,6 +86,11 @@ export default function MessageBubble({ msg, onOpenTechnical }) {
                   <TrendingUp size={12} />
                   {msg.forecast.length}-day forecast
                 </div>
+                <ResultChart
+                  columns={Object.keys(msg.forecast[0])}
+                  rows={msg.forecast}
+                  totalRows={msg.forecast.length}
+                />
                 <ResultTable
                   columns={Object.keys(msg.forecast[0])}
                   rows={msg.forecast}
@@ -84,7 +102,7 @@ export default function MessageBubble({ msg, onOpenTechnical }) {
             {/* Error */}
             {msg.error && <p style={styles.error}>{msg.error}</p>}
 
-            {/* ── 4. Technical detail: last, and behind one click (plan §6, §7) ── */}
+            {/* ── 5. Technical detail: last, and behind one click (plan §6, §7) ── */}
             {msg.sql && (
               <button
                 style={styles.techToggle}
