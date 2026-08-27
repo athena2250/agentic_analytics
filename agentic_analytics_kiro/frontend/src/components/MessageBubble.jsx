@@ -1,6 +1,6 @@
 import { useState } from "react";
 import ResultTable from "./ResultTable.jsx";
-import { Database, User, TrendingUp, Lightbulb, Code2, ChevronDown, ChevronRight } from "lucide-react";
+import { Database, User, TrendingUp, Lightbulb, Code2, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 
 export default function MessageBubble({ msg, onSQLClick }) {
   const isUser = msg.role === "user";
@@ -21,12 +21,12 @@ export default function MessageBubble({ msg, onSQLClick }) {
         {/* ── AI ── */}
         {!isUser && (
           <>
-            {/* Thinking dots */}
+            {/* Activity — one label for the one blocking backend step /query actually runs.
+                No multi-step trace until the backend emits real steps (plan §10). */}
             {msg.loading && (
-              <div style={styles.thinking}>
-                {[0, 0.2, 0.4].map((d, i) => (
-                  <span key={i} style={{ ...styles.dot, animationDelay: `${d}s` }} />
-                ))}
+              <div style={styles.activity}>
+                <Loader2 size={13} style={styles.spinner} />
+                <span>Generating and validating query…</span>
               </div>
             )}
 
@@ -65,14 +65,14 @@ export default function MessageBubble({ msg, onSQLClick }) {
             )}
 
             {/* Forecast */}
-            {msg.forecast && (
+            {msg.forecast?.length > 0 && (
               <div style={styles.section}>
                 <div style={styles.sectionLabel}>
                   <TrendingUp size={12} />
-                  7-day forecast
+                  {msg.forecast.length}-day forecast
                 </div>
                 <ResultTable
-                  columns={["date", "predicted_revenue"]}
+                  columns={Object.keys(msg.forecast[0])}
                   rows={msg.forecast}
                   totalRows={msg.forecast.length}
                 />
@@ -151,15 +151,15 @@ const styles = {
   },
   userText: { fontSize: 14, lineHeight: 1.6, color: "#fff" },
   aiText: { fontSize: 14, color: "var(--text)", lineHeight: 1.6 },
-  thinking: { display: "flex", gap: 5, padding: "4px 2px" },
-  dot: {
-    width: 6,
-    height: 6,
-    borderRadius: "50%",
-    background: "var(--accent)",
-    animation: "pulse 1.2s ease-in-out infinite",
-    display: "inline-block",
+  activity: {
+    display: "flex",
+    alignItems: "center",
+    gap: 7,
+    padding: "2px 0",
+    fontSize: 13,
+    color: "var(--text-muted)",
   },
+  spinner: { animation: "spin 1s linear infinite", flexShrink: 0 },
   sqlBlock: { display: "flex", flexDirection: "column", gap: 0 },
   sqlToggle: {
     display: "inline-flex",

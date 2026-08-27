@@ -1,14 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import { Send, Database } from "lucide-react";
 import MessageBubble from "./MessageBubble.jsx";
+import SuggestedQuestions from "./SuggestedQuestions.jsx";
 import { runQuery } from "../api.js";
-
-const SUGGESTIONS = [
-  "Show total revenue by department",
-  "Top 10 products by sales",
-  "Forecast revenue for next 7 days",
-  "Analyze trends and explain anomalies",
-];
 
 export default function ChatWindow({ session, onUpdate, onSQLClick }) {
   const [input, setInput] = useState("");
@@ -104,15 +98,9 @@ export default function ChatWindow({ session, onUpdate, onSQLClick }) {
           </div>
         </div>
 
-        {/* Suggestion chips — only when no messages yet */}
+        {/* Suggestion chips — derived from the dataset profile, only before the first question */}
         {session.messages.length === 0 && hasData && (
-          <div style={styles.chips}>
-            {SUGGESTIONS.map((s) => (
-              <button key={s} style={styles.chip} onClick={() => setInput(s)}>
-                {s}
-              </button>
-            ))}
-          </div>
+          <SuggestedQuestions profile={session.profile} onPick={setInput} />
         )}
 
         {/* Message list */}
@@ -132,7 +120,7 @@ export default function ChatWindow({ session, onUpdate, onSQLClick }) {
           <textarea
             ref={textareaRef}
             style={styles.textarea}
-            placeholder={hasData ? "Ask about your data…" : "Upload data first, then ask questions…"}
+            placeholder={hasData ? "What would you like to investigate?" : "Upload data first, then ask questions…"}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKey}
@@ -212,23 +200,6 @@ const styles = {
   welcomeBubble: { paddingTop: 4 },
   welcomeTitle: { fontSize: 13, fontWeight: 600, color: "var(--text)", marginBottom: 2 },
   welcomeText: { fontSize: 13, color: "var(--text-soft)", lineHeight: 1.6 },
-  chips: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: 7,
-    marginBottom: 24,
-    paddingLeft: 44,
-  },
-  chip: {
-    background: "var(--surface)",
-    border: "1px solid var(--border)",
-    color: "var(--text-soft)",
-    borderRadius: 20,
-    padding: "5px 13px",
-    fontSize: 12,
-    cursor: "pointer",
-    transition: "border-color 0.15s, color 0.15s",
-  },
   inputArea: {
     padding: "12px 20px 14px",
     borderTop: "1px solid var(--border)",
