@@ -1,18 +1,9 @@
-# LEGACY — sales-domain literals, read only by the old CLI in app.py.
+# SPELL_CORRECTIONS is a LEGACY sales-domain literal, read only by the old CLI
+# in app.py.
 #
-# Neither table may be used from api.py: the live /query and /profile paths
-# assume no column name in advance (plan §1, §15). api.py corrects typos
-# against the session's own loaded schema instead; see api._normalize.
-# COLUMN_ALIASES has no reader at all and is kept only so app.py's module
-# contract is unchanged.
-COLUMN_ALIASES = {
-    "customer_id": ["user_id"],
-    "transaction_id": ["order_id"],
-    "date": ["date"],
-    "revenue": ["revenue"],
-    "cost": ["cost"],
-}
-
+# It may not be used from api.py: the live /query and /profile paths assume no
+# column name in advance (plan §1, §15). api.py corrects typos against the
+# session's own loaded schema instead; see api._normalize.
 SPELL_CORRECTIONS = {
     "saels": "sales",
     "revnue": "revenue",

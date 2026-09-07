@@ -297,7 +297,7 @@ def _generate_sql(query: str, session: Session) -> str:
         for h in session.history[-3:]
     )
     default_table = session.unified or next(iter(session.tables))
-    schema = rich_schema_summary(session.tables, session.con)
+    schema = rich_schema_summary(session.tables, session.con, _ensure_profile(session))
 
     # Candidate joins between the session's tables (plan §16). Without this the
     # model sees several unrelated schemas and has no way to know which columns
@@ -350,7 +350,7 @@ SQL:"""
 
 
 def _fix_sql(sql: str, session: Session, error: str) -> str:
-    schema = rich_schema_summary(session.tables, session.con)
+    schema = rich_schema_summary(session.tables, session.con, _ensure_profile(session))
     prompt = f"""Fix this DuckDB SQL query.
 
 ERROR: {error}
@@ -372,11 +372,32 @@ def _fallback_sql(session: Session) -> str:
         return f'SELECT "{dimension}", SUM("{measure}") AS "{measure}" FROM {tname} GROUP BY "{dimension}"'
     return f"SELECT * FROM {tname} LIMIT 50"
 
+# Most result frames a session will ever re-serve. The cache exists to make a
+# repeated question and its /export cheap, not to retain a session's whole
+# history of result sets — each entry is a full DataFrame.
+_CACHE_MAX_ENTRIES = 16
+
+
 def _get_cached(session: Session, sql: str) -> pd.DataFrame | None:
     entry = session.cache.get(sql)
-    if entry and time.time() - entry[1] < CACHE_TTL:
-        return entry[0]
-    return None
+    if entry is None:
+        return None
+    if time.time() - entry[1] >= CACHE_TTL:
+        # Expired entries were previously left in place, so a long session held
+        # every frame it had ever produced.
+        del session.cache[sql]
+        return None
+    return entry[0]
+
+
+def _put_cached(session: Session, sql: str, df: pd.DataFrame) -> None:
+    now = time.time()
+    for key in [k for k, (_, at) in session.cache.items() if now - at >= CACHE_TTL]:
+        del session.cache[key]
+    session.cache[sql] = (df, now)
+    while len(session.cache) > _CACHE_MAX_ENTRIES:
+        # dicts preserve insertion order, so this drops the oldest entry.
+        del session.cache[next(iter(session.cache))]
 
 def _enrich(df: pd.DataFrame) -> pd.DataFrame:
     date_col = infer_date_column(df)
@@ -642,7 +663,7 @@ def _query_pipeline(session: Session, raw_query: str, session_id: str | None = N
     if result_df is None:
         try:
             result_df = session.con.execute(sql).fetchdf()
-            session.cache[sql] = (result_df, time.time())
+            _put_cached(session, sql, result_df)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Query failed: {e}")
 

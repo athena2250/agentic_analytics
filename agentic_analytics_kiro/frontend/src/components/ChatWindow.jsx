@@ -37,8 +37,8 @@ function stepFor(event, payload) {
 }
 
 /**
- * ConversationPanel (plan §8, evolved from ChatWindow): owns one session's
- * turn-taking — asking, retrying, and handing an answer's detail to the
+ * ChatWindow — the conversation panel of plan §8. Owns one session's
+ * turn-taking: asking, retrying, and handing an answer's detail to the
  * technical drawer. Rendering the stream is MessageList's job and the question
  * box is QuestionInput's.
  */
@@ -86,9 +86,11 @@ export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
     const steps = [{ label: "Generating SQL" }];
     // `retryQuery` rides along from the start so the message can be retried
     // even if the failure arrives without it in scope.
-    putMessage(msgId, {
-      id: msgId, role: "assistant", loading: true, retryQuery: question, steps: [...steps],
-    });
+    const showProgress = () =>
+      putMessage(msgId, {
+        id: msgId, role: "assistant", loading: true, retryQuery: question, steps: [...steps],
+      });
+    showProgress();
 
     const startedAt = performance.now();
     try {
@@ -96,9 +98,7 @@ export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
         const label = stepFor(event, payload);
         if (!label) return;
         steps.push({ label });
-        putMessage(msgId, {
-          id: msgId, role: "assistant", loading: true, retryQuery: question, steps: [...steps],
-        });
+        showProgress();
       });
       const aiMsg = {
         id: msgId,
@@ -204,7 +204,6 @@ export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
       <MessageList
         messages={session.messages}
         profile={session.profile}
-        datasetName={session.name}
         hasData={hasData}
         onOpenTechnical={openTechnical}
         onRetry={(m) => runTurn(m.retryQuery, m.id)}

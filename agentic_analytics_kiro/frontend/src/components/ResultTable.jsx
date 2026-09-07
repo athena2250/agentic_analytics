@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
+import { formatValue, formatCount } from "../format.js";
 
 const PAGE = 20;
 
@@ -57,7 +58,7 @@ export default function ResultTable({ columns, rows, totalRows }) {
 
       <div style={styles.footer}>
         <span style={styles.count}>
-          {(totalRows ?? rows.length).toLocaleString()} row{totalRows !== 1 ? "s" : ""}
+          {formatCount(totalRows ?? rows.length)} row{totalRows !== 1 ? "s" : ""}
           {totalRows > rows.length ? ` · showing first ${rows.length}` : ""}
         </span>
         {pages > 1 && (
@@ -72,10 +73,11 @@ export default function ResultTable({ columns, rows, totalRows }) {
   );
 }
 
+// A missing cell is drawn as an em-dash rather than rendered as the string
+// "null" — everything else is the shared numeric formatting.
 function fmt(v) {
   if (v === null || v === undefined) return <span style={{ color: "var(--text-muted)" }}>—</span>;
-  if (typeof v === "number") return Number.isInteger(v) ? v.toLocaleString() : v.toFixed(2);
-  return String(v);
+  return formatValue(v);
 }
 
 const styles = {

@@ -1,4 +1,5 @@
 import { Lightbulb } from "lucide-react";
+import { formatValue } from "../format.js";
 
 // A result is KPI-shaped when it is a single row with a small number of numeric
 // columns. Labels are the actual column names — nothing about the dataset is
@@ -13,15 +14,6 @@ export function deriveKPIs(columns, rows) {
   );
   if (!numeric.length || numeric.length > MAX_KPIS) return [];
   return numeric.map((c) => ({ label: c, value: row[c] }));
-}
-
-export function formatValue(v) {
-  if (!Number.isFinite(v)) return String(v);
-  const abs = Math.abs(v);
-  if (Number.isInteger(v)) return v.toLocaleString();
-  if (abs >= 1000) return v.toLocaleString(undefined, { maximumFractionDigits: 0 });
-  if (abs >= 1) return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
-  return v.toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
 
 export default function FindingsBlock({ narrative, kpis }) {

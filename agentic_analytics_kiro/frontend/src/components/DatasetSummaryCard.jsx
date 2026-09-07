@@ -1,8 +1,5 @@
 import { Calendar, Hash, Tag, Key, HelpCircle, CheckCircle2 } from "lucide-react";
-
-function formatNum(n) {
-  return n.toLocaleString();
-}
+import { formatCount } from "../format.js";
 
 // Quality badge (plan §7): a restatement of the null statistics the backend's
 // summary reports — not a score invented client-side. Columns profiling
@@ -42,8 +39,8 @@ export default function DatasetSummaryCard({ profile, name, variant = "compact" 
 
   const stats = [];
   if (summary.table_count > 1) stats.push(`${summary.table_count} tables`);
-  if (typeof summary.row_count === "number") stats.push(`${formatNum(summary.row_count)} rows`);
-  if (summary.column_count > 0) stats.push(`${formatNum(summary.column_count)} columns`);
+  if (typeof summary.row_count === "number") stats.push(`${formatCount(summary.row_count)} rows`);
+  if (summary.column_count > 0) stats.push(`${formatCount(summary.column_count)} columns`);
   if (span?.months) stats.push(`${span.months} month${span.months > 1 ? "s" : ""} of data`);
 
   const detected = [

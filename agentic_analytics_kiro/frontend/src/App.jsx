@@ -4,6 +4,7 @@ import Workspace from "./components/Workspace.jsx";
 import EmptyState from "./components/EmptyState.jsx";
 import UploadIntentDialog from "./components/UploadIntentDialog.jsx";
 import { createSession, uploadFiles, getProfile, getRelationships, getFormats } from "./api.js";
+import { centerColumn } from "./styles.js";
 
 // A session holding a dataset takes that dataset's name, so the sessions list
 // reads as a list of datasets (plan §13.11). User renames always win.
@@ -241,14 +242,7 @@ const styles = {
     overflow: "hidden",
     background: "var(--bg)",
   },
-  main: {
-    flex: 1,
-    display: "flex",
-    flexDirection: "column",
-    overflow: "hidden",
-    borderLeft: "1px solid var(--border)",
-    borderRight: "1px solid var(--border)",
-  },
+  main: centerColumn,
   empty: {
     flex: 1,
     display: "flex",

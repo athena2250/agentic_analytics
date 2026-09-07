@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { formatValue } from "./FindingsBlock.jsx";
+import { formatValue } from "../format.js";
 
 /**
  * A chart for a query result, when the result's *shape* supports one.

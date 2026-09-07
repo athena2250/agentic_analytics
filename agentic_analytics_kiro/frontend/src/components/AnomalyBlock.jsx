@@ -1,4 +1,6 @@
 import { Activity } from "lucide-react";
+import { formatNumber } from "../format.js";
+import { sectionLabel, section } from "../styles.js";
 
 /**
  * AnomalyBlock (plan §16): the points the detector actually flagged, shown
@@ -31,7 +33,7 @@ export default function AnomalyBlock({ anomalies }) {
           {points.map((p, i) => (
             <div key={i} style={styles.row}>
               <span style={styles.when}>{p.when ? p.when.slice(0, 10) : `row ${i + 1}`}</span>
-              <span style={styles.value}>{formatValue(p.value)}</span>
+              <span style={styles.value}>{formatNumber(p.value, 4)}</span>
               <span style={{ ...styles.tag, ...(p.direction === "low" ? styles.low : styles.high) }}>
                 {p.direction}
               </span>
@@ -55,24 +57,9 @@ export default function AnomalyBlock({ anomalies }) {
   );
 }
 
-// Locale grouping only — the value itself is whatever the backend measured.
-const formatValue = (v) =>
-  typeof v === "number"
-    ? v.toLocaleString(undefined, { maximumFractionDigits: 4 })
-    : String(v);
-
 const styles = {
-  section: { display: "flex", flexDirection: "column", gap: 5 },
-  label: {
-    display: "flex",
-    alignItems: "center",
-    gap: 5,
-    fontSize: 11,
-    fontWeight: 600,
-    color: "var(--text-muted)",
-    textTransform: "uppercase",
-    letterSpacing: "0.04em",
-  },
+  section,
+  label: sectionLabel,
   in: { fontWeight: 500, textTransform: "none", letterSpacing: 0 },
   list: {
     display: "flex",

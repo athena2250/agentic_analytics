@@ -12,10 +12,6 @@ export async function createSession() {
   return r.json();
 }
 
-export async function deleteSession(sid) {
-  await fetch(`${BASE}/session/${sid}`, { method: "DELETE" });
-}
-
 export async function uploadFiles(sid, files) {
   const form = new FormData();
   for (const f of files) form.append("files", f);
@@ -24,22 +20,12 @@ export async function uploadFiles(sid, files) {
   return r.json();
 }
 
-export async function runQuery(sid, query) {
-  const r = await fetch(`${BASE}/session/${sid}/query`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query }),
-  });
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
-}
-
 /**
- * Streaming variant of runQuery (plan §10): POSTs the question and parses the
- * SSE frames the backend emits as each real step completes, calling
+ * Asks one question (plan §10): POSTs it to the streaming endpoint and parses
+ * the SSE frames the backend emits as each real step completes, calling
  * `onEvent(name, payload)` for each one. Resolves with the RESPONSE_READY
- * payload — the same object `runQuery` returns — so callers get the answer the
- * same way whether or not they watched the steps.
+ * payload — the same object the blocking `POST /query` returns, which the UI
+ * no longer calls since every turn wants the steps.
  *
  * EventSource can't be used here: it only issues GET requests, and the question
  * travels in the body. fetch + a stream reader is the equivalent for POST.

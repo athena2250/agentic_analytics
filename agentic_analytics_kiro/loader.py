@@ -204,6 +204,42 @@ def _classify_column(col: str, dtype: str, distinct_count: int, row_count: int) 
     return "unknown", 0.2
 
 
+def _column_stats(
+    tname: str, cols: list[str], con: duckdb.DuckDBPyConnection
+) -> dict[str, tuple]:
+    """Null/distinct/min/max for every column of one table, in a single scan.
+
+    One aggregate query per *table* rather than per column: on a wide table the
+    per-column form re-read the whole table once for each column, which is the
+    dominant cost of profiling a large upload. Falls back to the per-column
+    queries if the combined one fails (a type DuckDB won't MIN/MAX, say), so a
+    single awkward column costs its own stats and not the table's."""
+    if not cols:
+        return {}
+
+    def _select(names: list[str]) -> str:
+        parts = []
+        for col in names:
+            q = f'"{col}"'
+            parts += [f"COUNT(*) - COUNT({q})", f"COUNT(DISTINCT {q})",
+                      f"MIN({q})", f"MAX({q})"]
+        return f"SELECT {', '.join(parts)} FROM {tname}"
+
+    try:
+        row = con.execute(_select(cols)).fetchone()
+        return {col: tuple(row[i * 4:i * 4 + 4]) for i, col in enumerate(cols)}
+    except Exception:
+        pass
+
+    stats: dict[str, tuple] = {}
+    for col in cols:
+        try:
+            stats[col] = con.execute(_select([col])).fetchone()
+        except Exception:
+            stats[col] = (None, None, None, None)
+    return stats
+
+
 def profile_tables(tables: dict[str, list[str]], con: duckdb.DuckDBPyConnection) -> dict:
     """
     Compute per-table, per-column profiles via DuckDB aggregate queries
@@ -219,25 +255,20 @@ def profile_tables(tables: dict[str, list[str]], con: duckdb.DuckDBPyConnection)
         except Exception:
             continue
 
+        columns = [(row["column_name"], row["column_type"]) for _, row in desc.iterrows()]
+        stats = _column_stats(tname, [c for c, _ in columns], con)
+
         col_profiles = []
-        for _, row in desc.iterrows():
-            col, dtype = row["column_name"], row["column_type"]
-            quoted = f'"{col}"'
+        for col, dtype in columns:
+            nulls, distinct_count, min_val, max_val = stats.get(col, (None, None, None, None))
             try:
-                stats = con.execute(
-                    f"SELECT COUNT(*) - COUNT({quoted}) AS nulls, "
-                    f"COUNT(DISTINCT {quoted}) AS distinct_count, "
-                    f"MIN({quoted}) AS min_val, MAX({quoted}) AS max_val "
-                    f"FROM {tname}"
-                ).fetchone()
-                nulls, distinct_count, min_val, max_val = stats
                 samples = [
                     r[0] for r in con.execute(
-                        f"SELECT DISTINCT {quoted} FROM {tname} WHERE {quoted} IS NOT NULL LIMIT 3"
+                        f'SELECT DISTINCT "{col}" FROM {tname} WHERE "{col}" IS NOT NULL LIMIT 3'
                     ).fetchall()
                 ]
             except Exception:
-                nulls, distinct_count, min_val, max_val, samples = None, None, None, None, []
+                samples = []
 
             role, confidence = _classify_column(col, dtype, distinct_count or 0, row_count)
             col_profiles.append({
@@ -286,14 +317,30 @@ def pick_default_columns(
     return picks
 
 
-def rich_schema_summary(tables: dict[str, list[str]], con: duckdb.DuckDBPyConnection) -> str:
+def rich_schema_summary(
+    tables: dict[str, list[str]],
+    con: duckdb.DuckDBPyConnection,
+    profile: dict | None = None,
+) -> str:
     """
     Richer schema string including data types and sample values.
     Used to give the LLM enough context to generate accurate SQL.
+
+    Pass an already-computed `profile` (from profile_tables) to build the
+    string from it: it already holds every column's dtype and sample values, so
+    reusing it turns two DuckDB queries per table per LLM call — this runs on
+    every SQL generation and every repair — into none.
     """
     lines = []
     for tname, cols in tables.items():
         lines.append(f"TABLE: {tname}")
+        profiled = (profile or {}).get(tname)
+        if profiled:
+            for col in profiled["columns"]:
+                sample_str = ", ".join(str(s) for s in col["samples"])
+                lines.append(f"  {col['name']} ({col['dtype']}) — e.g. {sample_str}")
+            lines.append("")
+            continue
         try:
             desc = con.execute(f"DESCRIBE {tname}").fetchdf()
             sample = con.execute(f"SELECT * FROM {tname} LIMIT 3").fetchdf()

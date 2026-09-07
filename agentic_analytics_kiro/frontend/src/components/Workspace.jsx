@@ -3,6 +3,7 @@ import ChatWindow from "./ChatWindow.jsx";
 import CodePanel from "./CodePanel.jsx";
 import DatasetReadyBanner from "./DatasetReadyBanner.jsx";
 import { exportLast } from "../api.js";
+import { centerColumn } from "../styles.js";
 
 /**
  * Workspace view (plan §7/§8): what the app shows once the active session
@@ -56,12 +57,5 @@ export default function Workspace({ session, onUpdate }) {
 }
 
 const styles = {
-  conversation: {
-    flex: 1,
-    display: "flex",
-    flexDirection: "column",
-    overflow: "hidden",
-    borderLeft: "1px solid var(--border)",
-    borderRight: "1px solid var(--border)",
-  },
+  conversation: centerColumn,
 };

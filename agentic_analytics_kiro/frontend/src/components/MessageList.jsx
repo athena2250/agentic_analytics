@@ -12,7 +12,6 @@ import SuggestedQuestions from "./SuggestedQuestions.jsx";
 export default function MessageList({
   messages,
   profile,
-  datasetName,
   hasData,
   onOpenTechnical,
   onRetry,
@@ -35,8 +34,6 @@ export default function MessageList({
         <MessageBubble
           key={msg.id}
           msg={msg}
-          profile={profile}
-          datasetName={datasetName}
           onOpenTechnical={onOpenTechnical}
           onRetry={onRetry}
           canRetry={canRetry}

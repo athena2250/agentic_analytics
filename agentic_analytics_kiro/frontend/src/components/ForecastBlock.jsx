@@ -1,6 +1,8 @@
 import { TrendingUp } from "lucide-react";
 import ResultChart from "./ResultChart.jsx";
 import ResultTable from "./ResultTable.jsx";
+import { formatNumber } from "../format.js";
+import { sectionLabel, section } from "../styles.js";
 
 /**
  * ForecastBlock (plan §8, §16): renders a forecast returned by /query.
@@ -41,7 +43,7 @@ function ForecastFootnote({ meta }) {
     meta.seasonality?.length && `seasonality: ${meta.seasonality.join(", ")}`,
     // Error is only meaningful next to the baseline it was compared against.
     meta.mae != null && meta.baseline_mae != null &&
-      `held-out error ${round(meta.mae)} vs ${round(meta.baseline_mae)} for a seasonal-naive baseline`,
+      `held-out error ${formatNumber(meta.mae)} vs ${formatNumber(meta.baseline_mae)} for a seasonal-naive baseline`,
   ].filter(Boolean);
 
   return (
@@ -69,20 +71,10 @@ function horizonLabel(rows, meta) {
 }
 
 const near = (value, target, tolerance = 0.5) => Math.abs(value - target) <= tolerance;
-const round = (v) => Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 });
 
 const styles = {
-  section: { display: "flex", flexDirection: "column", gap: 5 },
-  label: {
-    display: "flex",
-    alignItems: "center",
-    gap: 5,
-    fontSize: 11,
-    fontWeight: 600,
-    color: "var(--text-muted)",
-    textTransform: "uppercase",
-    letterSpacing: "0.04em",
-  },
+  section,
+  label: sectionLabel,
   footnote: {
     display: "flex",
     flexDirection: "column",

@@ -1,4 +1,5 @@
 import { GitCompareArrows, AlertTriangle } from "lucide-react";
+import { sectionLabel } from "../styles.js";
 
 /**
  * CorrelationBlock (plan §16): the result of a cross-dataset comparison.
@@ -84,16 +85,7 @@ const styles = {
     borderRadius: "var(--radius-md)",
     padding: "10px 12px",
   },
-  label: {
-    display: "flex",
-    alignItems: "center",
-    gap: 5,
-    fontSize: 11,
-    fontWeight: 600,
-    color: "var(--text-muted)",
-    textTransform: "uppercase",
-    letterSpacing: "0.04em",
-  },
+  label: sectionLabel,
   pair: { fontSize: 13, color: "var(--text)", fontWeight: 500, wordBreak: "break-word" },
   grid: { display: "flex", flexDirection: "column", gap: 2, marginTop: 2 },
   row: { display: "flex", alignItems: "baseline", gap: 8, fontSize: 12 },
