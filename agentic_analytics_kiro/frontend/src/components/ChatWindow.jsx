@@ -1,7 +1,39 @@
 import { useState } from "react";
 import MessageList from "./MessageList.jsx";
 import QuestionInput from "./QuestionInput.jsx";
-import { runQuery } from "../api.js";
+import { runQueryStream, exportLast } from "../api.js";
+
+/**
+ * Turns a backend event (plan §10) into the step the trace should now show.
+ * Each entry is the work that *starts* when the event arrives, so ActivityTrace
+ * checks it off as soon as the following event lands — the spinning line is
+ * always something the backend is actually doing, never a guess at what's next.
+ *
+ * Events that only complete earlier work (PROFILE_COMPLETED) return null: they
+ * close the open step rather than opening one. Unknown event names also return
+ * null, so a backend that grows its event set can't make this UI narrate steps
+ * it doesn't understand.
+ */
+function stepFor(event, payload) {
+  switch (event) {
+    case "PROFILE_STARTED":
+      return "Profiling columns";
+    case "SQL_GENERATED":
+      return "Validating SQL against the schema";
+    case "SQL_VALIDATED":
+      return payload.validation?.status === "fallback"
+        ? "Generated SQL didn't validate — running a schema-driven fallback"
+        : "Executing query";
+    case "QUERY_EXECUTED":
+      return `Preparing the answer (${payload.total_rows} row${payload.total_rows === 1 ? "" : "s"})`;
+    case "INVESTIGATION_STEP":
+      // Dataset-dependent work: the label is whatever the backend sent, so new
+      // kinds of investigation need no change here (plan §1, §10).
+      return payload.label ?? null;
+    default:
+      return null;
+  }
+}
 
 /**
  * ConversationPanel (plan §8, evolved from ChatWindow): owns one session's
@@ -48,13 +80,25 @@ export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
   // question being asked twice (plan §13.8).
   const runTurn = async (question, msgId) => {
     setLoading(true);
+    // The first step is open from the moment the request leaves: the backend is
+    // generating SQL before it can report anything about it.
+    const steps = [{ label: "Generating SQL" }];
     // `retryQuery` rides along from the start so the message can be retried
     // even if the failure arrives without it in scope.
-    putMessage(msgId, { id: msgId, role: "assistant", loading: true, retryQuery: question });
+    putMessage(msgId, {
+      id: msgId, role: "assistant", loading: true, retryQuery: question, steps: [...steps],
+    });
 
     const startedAt = performance.now();
     try {
-      const data = await runQuery(session.id, question);
+      const data = await runQueryStream(session.id, question, (event, payload) => {
+        const label = stepFor(event, payload);
+        if (!label) return;
+        steps.push({ label });
+        putMessage(msgId, {
+          id: msgId, role: "assistant", loading: true, retryQuery: question, steps: [...steps],
+        });
+      });
       const aiMsg = {
         id: msgId,
         role: "assistant",
@@ -78,6 +122,9 @@ export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
       // Load the drawer with this answer's detail, but leave it collapsed:
       // the answer is primary, technical detail is on demand (plan §6).
       if (data.sql) openTechnical(aiMsg, false);
+      // An .xlsx body can't come down the event stream, so an export turn ends
+      // with the backend saying the file is ready and the client fetching it.
+      if (data.export_ready) exportLast(session.id).catch((e) => console.error(e));
     } catch (e) {
       putMessage(msgId, {
         id: msgId,

@@ -364,17 +364,43 @@ def get_profile(sid: str):
 class QueryRequest(BaseModel):
     query: str
 
-@app.post("/session/{sid}/query")
-def run_query(sid: str, body: QueryRequest):
-    session = get_session(sid)
-    if not session.tables:
-        raise HTTPException(status_code=400, detail="No data loaded. Upload files first.")
 
+# ── One conversational turn, as a sequence of real steps ──────────────────────
+#
+# The pipeline is written as a generator so the same code can serve both
+# transports (plan §10): `/query` drains it and returns only the final payload,
+# `/query/stream` forwards each step as an SSE event as it actually completes.
+# Every event corresponds to backend work that just finished — nothing is
+# emitted to fill silence.
+#
+# Event set, deliberately kept to the minimal one in §10:
+#   PROFILE_STARTED / PROFILE_COMPLETED  — only when this turn had to profile
+#   SQL_GENERATED / SQL_VALIDATED
+#   QUERY_EXECUTED
+#   INVESTIGATION_STEP                   — generic, carries a label
+#   RESPONSE_READY
+# plus ERROR, which the stream needs because a failure after the response has
+# started can no longer be reported as an HTTP status.
+
+def _query_pipeline(session: Session, raw_query: str):
+    """Yield (event, payload) as each step of one turn completes; the last
+    event is always RESPONSE_READY carrying the same dict `/query` returns."""
     started = time.perf_counter()
-    query = _normalize_dates(_normalize(body.query))
+    query = _normalize_dates(_normalize(raw_query))
     intent = _detect_intent(query)
 
+    # Profiling is normally already done at upload time; it only runs here when
+    # a code path below is the first to need it, and only then is it announced.
+    if session.profile is None:
+        yield "PROFILE_STARTED", {}
+        _ensure_profile(session)
+        # `profile` is keyed by table name (the shape /profile returns under
+        # "tables"), so the names are its keys.
+        yield "PROFILE_COMPLETED", {"tables": list(session.profile)}
+
     sql = _generate_sql(query, session)
+    yield "SQL_GENERATED", {"sql": sql, "intent": intent}
+
     valid, msg = _validate_sql(sql, session)
 
     # How the SQL that ran was arrived at, reported to the UI rather than left
@@ -385,6 +411,7 @@ def run_query(sid: str, body: QueryRequest):
         if valid:
             break
         fix_attempts += 1
+        yield "INVESTIGATION_STEP", {"label": f"Repairing SQL after a validation error (attempt {fix_attempts})"}
         sql = _fix_sql(sql, session, msg)
         valid, msg = _validate_sql(sql, session)
 
@@ -400,13 +427,22 @@ def run_query(sid: str, body: QueryRequest):
         validation = {"status": "fallback", "fix_attempts": fix_attempts, "error": msg}
         sql = _fallback_sql(session)
 
+    yield "SQL_VALIDATED", {"sql": sql, "validation": validation}
+
     result_df = _get_cached(session, sql)
+    cached = result_df is not None
     if result_df is None:
         try:
             result_df = session.con.execute(sql).fetchdf()
             session.cache[sql] = (result_df, time.time())
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Query failed: {e}")
+
+    yield "QUERY_EXECUTED", {
+        "total_rows": len(result_df),
+        "cached": cached,
+        "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+    }
 
     session.history.append({
         "query": query,
@@ -428,32 +464,22 @@ def run_query(sid: str, body: QueryRequest):
     }
 
     if intent == "predict":
+        yield "INVESTIGATION_STEP", {"label": "Fitting a forecast on the returned rows"}
         pred = predict_sales(result_df)
         response["forecast"] = pred.to_dict(orient="records") if pred is not None else None
 
     if intent == "insight":
+        yield "INVESTIGATION_STEP", {"label": "Summarising trends and anomalies"}
         response["insights"] = _insights(result_df, query)
 
-    if intent == "export":
-        buf = io.BytesIO()
-        result_df.to_excel(buf, index=False)
-        buf.seek(0)
-        return StreamingResponse(
-            buf,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": "attachment; filename=export.xlsx"},
-        )
-
-    return _json(response)
+    response["duration_ms"] = round((time.perf_counter() - started) * 1000, 1)
+    yield "RESPONSE_READY", {"response": response}
 
 
-@app.get("/session/{sid}/export")
-def export_last(sid: str):
-    session = get_session(sid)
-    if not session.history:
-        raise HTTPException(status_code=400, detail="No query run yet.")
-    last_sql = session.history[-1]["sql"]
-    df = session.con.execute(last_sql).fetchdf()
+def _export_xlsx(session: Session, sql: str) -> StreamingResponse:
+    df = _get_cached(session, sql)
+    if df is None:
+        df = session.con.execute(sql).fetchdf()
     buf = io.BytesIO()
     df.to_excel(buf, index=False)
     buf.seek(0)
@@ -462,3 +488,81 @@ def export_last(sid: str):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=export.xlsx"},
     )
+
+
+@app.post("/session/{sid}/query")
+def run_query(sid: str, body: QueryRequest):
+    session = get_session(sid)
+    if not session.tables:
+        raise HTTPException(status_code=400, detail="No data loaded. Upload files first.")
+
+    # Same pipeline as the streaming endpoint, drained to its final event: this
+    # endpoint's contract is unchanged, the intermediate steps are simply not
+    # observable over a single blocking request (plan §10).
+    response = None
+    for event, payload in _query_pipeline(session, body.query):
+        if event == "RESPONSE_READY":
+            response = payload["response"]
+
+    if response["intent"] == "export":
+        return _export_xlsx(session, response["sql"])
+
+    return _json(response)
+
+
+def _sse(event: str, payload: dict) -> str:
+    """One SSE frame. Payload goes through the same encoder as every JSON
+    response so timestamps/decimals/NaN survive the trip identically."""
+    data = json.dumps(payload, cls=_Encoder)
+    return f"event: {event}\ndata: {data}\n\n"
+
+
+@app.post("/session/{sid}/query/stream")
+def run_query_stream(sid: str, body: QueryRequest):
+    """SSE variant of `/query` (plan §9.6, §10). Emits the minimal event set as
+    each step completes; `/query` stays available unchanged for callers that
+    only want the answer."""
+    session = get_session(sid)
+    if not session.tables:
+        raise HTTPException(status_code=400, detail="No data loaded. Upload files first.")
+
+    def stream():
+        try:
+            for event, payload in _query_pipeline(session, body.query):
+                if event == "RESPONSE_READY":
+                    response = payload["response"]
+                    # An .xlsx body can't travel down an event stream, so the
+                    # export intent is reported and the client fetches the file
+                    # from /export — the SQL it exports is this turn's, which
+                    # /export re-runs as the session's last query.
+                    if response["intent"] == "export":
+                        response = {**response, "export_ready": True}
+                    yield _sse(event, {"response": response})
+                else:
+                    yield _sse(event, payload)
+        except HTTPException as e:
+            # The stream's status line is already sent, so a mid-turn failure is
+            # reported in-band rather than as an HTTP error the client can see.
+            yield _sse("ERROR", {"detail": e.detail, "status": e.status_code})
+        except Exception as e:
+            yield _sse("ERROR", {"detail": str(e), "status": 500})
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # Proxies (including the Vite dev proxy's upstreams) otherwise
+            # buffer the body and defeat the point of streaming.
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/session/{sid}/export")
+def export_last(sid: str):
+    session = get_session(sid)
+    if not session.history:
+        raise HTTPException(status_code=400, detail="No query run yet.")
+    return _export_xlsx(session, session.history[-1]["sql"])

@@ -184,12 +184,13 @@ Everything under "existing"/"evolved" keeps its current file; "NEW" items are ad
 
 ## 10. Streaming / Agent Activity
 
-**Current state:** none. `/query` is fully synchronous.
+**Current state:** `/query` is synchronous; `/query/stream` streams the same turn as SSE events (see *Implemented* below).
 
 **MVP decision:** do **not** build full SSE/event streaming in the first UI phases. Instead:
 - For upload/profiling, the existing single request/response is enough for MVP — show a client-side sequence of labeled steps ("Uploading → Loading → Profiling") driven by the actual sequential awaits already present in the upload flow (upload call, then a follow-up profile call per §9.1), not by fake timers.
 - For `/query`, MVP shows a single "Working…" state (already exists as "thinking dots" — replace the fake dots with a static, honest label like "Generating and validating query…") since the backend genuinely is one blocking call today. This is honest given §10's constraint: *"Only show activity that corresponds to actual backend operations."*
-- **Once** the backend gains a real multi-step agent loop (§9.7, future), introduce SSE (`text/event-stream`, simplest to add to FastAPI, no new infra vs. WebSockets) with a minimal event set:
+- **Implemented:** `POST /session/{sid}/query/stream` (SSE) now runs alongside the unchanged synchronous `/query` — both drain the same `_query_pipeline` generator in `api.py`, so the streaming endpoint reports the steps the blocking one simply can't expose. The frontend's `runQueryStream` (`api.js`) consumes it and feeds `ActivityTrace`'s step list; `ChatWindow.stepFor` maps an event to the work that *starts* with it, so a step is only checked off once the following event proves it finished. Ahead of the multi-step agent loop below, the emitted steps are the ones the current pipeline genuinely performs.
+- **Once** the backend gains a real multi-step agent loop (§9.7, future), the same transport carries SSE (`text/event-stream`, simplest to add to FastAPI, no new infra vs. WebSockets) with a minimal event set:
   - `PROFILE_STARTED` / `PROFILE_COMPLETED`
   - `SQL_GENERATED` / `SQL_VALIDATED`
   - `QUERY_EXECUTED`
