@@ -15,14 +15,16 @@ import ExecutionMeta from "./ExecutionMeta.jsx";
  * produced); this file owns the drawer chrome — rail, header, copy/reset,
  * export — and the SQL draft the user may edit.
  */
-export default function CodePanel({ sql, meta, open, onToggle, onSQLChange, onExport }) {
+export default function CodePanel({ sql, meta, open, onToggle, onSQLChange, onExport, latestSQL = null }) {
   const [copied, setCopied] = useState(false);
   const [localSQL, setLocalSQL] = useState(sql);
   const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState(null);
 
   // Sync when parent pushes a new SQL (from clicking a message)
   useEffect(() => {
     setLocalSQL(sql);
+    setExportError(null);
   }, [sql]);
 
   const copy = () => {
@@ -40,16 +42,28 @@ export default function CodePanel({ sql, meta, open, onToggle, onSQLChange, onEx
   const doExport = async () => {
     if (!onExport || exporting) return;
     setExporting(true);
+    setExportError(null);
     try {
       await onExport();
     } catch (e) {
+      // A download that silently doesn't happen is worse than a stated
+      // failure — say so here rather than only in the console (plan §1).
       console.error("export failed", e);
+      setExportError(e.message || "Export failed.");
     } finally {
       setExporting(false);
     }
   };
 
   const isEmpty = !localSQL?.trim();
+  // /export returns the session's most recent result. Offering the button
+  // while an earlier answer's SQL is on screen would hand back a file that
+  // doesn't match what the drawer is showing, so it is only enabled when the
+  // two are the same query (plan §13.12).
+  const exportsThisAnswer = Boolean(latestSQL) && sql === latestSQL;
+  // Edits to the SQL aren't run anywhere — the file still contains the result
+  // that actually ran.
+  const edited = localSQL !== sql;
 
   // ── Collapsed rail ──
   if (!open) {
@@ -104,10 +118,35 @@ export default function CodePanel({ sql, meta, open, onToggle, onSQLChange, onEx
           <ExecutionMeta meta={meta} />
           {onExport && (
             <div style={styles.exportRow}>
-              <button style={styles.exportBtn} onClick={doExport} disabled={exporting}>
+              <button
+                style={{
+                  ...styles.exportBtn,
+                  ...(exportsThisAnswer && !exporting ? {} : styles.exportDisabled),
+                }}
+                onClick={doExport}
+                disabled={!exportsThisAnswer || exporting}
+                title={
+                  exportsThisAnswer
+                    ? "Download this answer's rows as .xlsx"
+                    : "Export returns the most recent answer's rows — open technical details on that answer to export it"
+                }
+              >
                 <Download size={12} />
-                {exporting ? "Exporting…" : "Export last result (.xlsx)"}
+                {exporting ? "Exporting…" : "Export this result (.xlsx)"}
               </button>
+              {!exportsThisAnswer && (
+                <p style={styles.exportNote}>
+                  Export returns the most recent answer's rows. Open “Technical
+                  details” on that answer to download it.
+                </p>
+              )}
+              {exportsThisAnswer && edited && (
+                <p style={styles.exportNote}>
+                  Your edits above aren't run — the file contains the result of
+                  the query that ran.
+                </p>
+              )}
+              {exportError && <p style={styles.exportError}>{exportError}</p>}
             </div>
           )}
         </>
@@ -209,6 +248,19 @@ const styles = {
     borderTop: "1px solid var(--border)",
     padding: "8px 14px",
     flexShrink: 0,
+  },
+  exportDisabled: { opacity: 0.45, cursor: "not-allowed" },
+  exportNote: {
+    fontSize: 11,
+    color: "var(--text-muted)",
+    lineHeight: 1.5,
+    marginTop: 6,
+  },
+  exportError: {
+    fontSize: 11,
+    color: "var(--danger)",
+    lineHeight: 1.5,
+    marginTop: 6,
   },
   exportBtn: {
     display: "inline-flex",

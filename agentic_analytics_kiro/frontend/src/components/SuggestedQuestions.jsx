@@ -107,14 +107,25 @@ export function buildSuggestions(profile) {
   return [...new Set(out)].slice(0, 4);
 }
 
-export default function SuggestedQuestions({ profile, onPick }) {
+/**
+ * Clicking a chip asks the question outright (plan §13.5) rather than dropping
+ * it into the input box: a suggestion is a question the user chose, so it
+ * enters the conversation as a turn like any other. Typing remains the way to
+ * ask something a chip doesn't say.
+ */
+export default function SuggestedQuestions({ profile, onPick, disabled = false }) {
   const suggestions = buildSuggestions(profile);
   if (!suggestions.length) return null;
 
   return (
     <div style={styles.wrap}>
       {suggestions.map((s) => (
-        <button key={s} style={styles.chip} onClick={() => onPick(s)}>
+        <button
+          key={s}
+          style={{ ...styles.chip, ...(disabled ? styles.chipDisabled : {}) }}
+          onClick={() => onPick(s)}
+          disabled={disabled}
+        >
           {s}
         </button>
       ))}
@@ -140,4 +151,5 @@ const styles = {
     cursor: "pointer",
     transition: "border-color 0.15s, color 0.15s",
   },
+  chipDisabled: { opacity: 0.45, cursor: "not-allowed" },
 };

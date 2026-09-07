@@ -44,7 +44,11 @@ export default function MessageList({
       ))}
 
       {showSuggestions && (
-        <SuggestedQuestions profile={profile} onPick={onPickSuggestion} />
+        <SuggestedQuestions
+          profile={profile}
+          onPick={onPickSuggestion}
+          disabled={!canRetry}
+        />
       )}
 
       <div ref={bottomRef} style={{ height: 1 }} />

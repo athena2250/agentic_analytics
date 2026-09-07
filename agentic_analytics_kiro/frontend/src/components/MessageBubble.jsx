@@ -17,7 +17,19 @@ export default function MessageBubble({ msg, onOpenTechnical, onRetry, canRetry 
     msg.columns?.length > 0 &&
     msg.rows?.length > 0 &&
     !msg.columns.every((c) => kpiLabels.has(c));
-  const isEmptyResult = msg.columns?.length > 0 && msg.rows?.length === 0;
+  // A result that came back with no rows — including one with no columns
+  // either, which would otherwise render as an empty bubble. Loading, failed
+  // and narrative-only turns are not results and are excluded (plan §13.9).
+  const isEmptyResult =
+    !msg.loading && !msg.error && !msg.text && Array.isArray(msg.rows) && msg.rows.length === 0;
+  // A forecast was asked for and none came back: predict_sales() needs a date
+  // column and a numeric measure in the rows the query returned, plus enough
+  // history to fit on. That happens for real — a forecast question whose SQL
+  // fell back to a schema-driven aggregate returns no date column at all — and
+  // rendering only the table would leave the user to guess why the forecast is
+  // missing (plan §1).
+  const forecastUnavailable =
+    !msg.loading && !msg.error && msg.intent === "predict" && !msg.forecast?.length;
 
   return (
     <div style={{ ...styles.row, ...(isUser ? styles.rowUser : styles.rowAI) }}>
@@ -80,6 +92,19 @@ export default function MessageBubble({ msg, onOpenTechnical, onRetry, canRetry 
             )}
 
             <ForecastBlock forecast={msg.forecast} />
+
+            {/* Asked for a forecast, didn't get one — said plainly, next to the
+                rows that were returned instead. */}
+            {forecastUnavailable && !isEmptyResult && (
+              <div style={styles.emptyResult}>
+                <Inbox size={14} color="var(--text-muted)" />
+                <span>
+                  No forecast could be fit on these rows — a forecast needs a date
+                  column and a numeric measure in the result, with enough history
+                  behind them. The rows above are what the query returned.
+                </span>
+              </div>
+            )}
 
             {/* Error — stated as a failed turn, with the question offered back
                 for another attempt rather than requiring a retype (plan §13.8). */}

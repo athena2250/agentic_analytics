@@ -128,7 +128,19 @@ export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
       if (data.sql) openTechnical(aiMsg, false);
       // An .xlsx body can't come down the event stream, so an export turn ends
       // with the backend saying the file is ready and the client fetching it.
-      if (data.export_ready) exportLast(session.id).catch((e) => console.error(e));
+      // A download that fails is reported on the turn that asked for it, not
+      // left to the console — the user would otherwise see a finished answer
+      // and no file (plan §13.12).
+      if (data.export_ready) {
+        exportLast(session.id).catch((e) => {
+          console.error(e);
+          putMessage(msgId, {
+            ...aiMsg,
+            error: `The result was ready but the download failed: ${e.message}`,
+            retryQuery: question,
+          });
+        });
+      }
     } catch (e) {
       putMessage(msgId, {
         id: msgId,
@@ -186,7 +198,7 @@ export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
         onOpenTechnical={openTechnical}
         onRetry={(m) => runTurn(m.retryQuery, m.id)}
         canRetry={!loading}
-        onPickSuggestion={setInput}
+        onPickSuggestion={ask}
       />
 
       {/* ── Input ── */}

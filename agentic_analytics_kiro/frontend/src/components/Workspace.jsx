@@ -19,6 +19,10 @@ export default function Workspace({ session, onUpdate }) {
   const [meta, setMeta] = useState(null);
   const [open, setOpen] = useState(false);
 
+  // The SQL behind the most recent answer — the one /export would return.
+  const latestSQL =
+    [...session.messages].reverse().find((m) => m.role === "assistant" && m.sql)?.sql ?? null;
+
   const openTechnical = useCallback((nextSQL, nextMeta, shouldOpen = true) => {
     setSQL(nextSQL ?? "");
     setMeta(nextMeta ?? null);
@@ -35,6 +39,9 @@ export default function Workspace({ session, onUpdate }) {
         <ChatWindow session={session} onUpdate={onUpdate} onOpenTechnical={openTechnical} />
       </div>
 
+      {/* GET /export re-runs the session's *last* query, so the drawer is told
+          which SQL that is: export stays available only while the answer on
+          screen is the one the file would contain (plan §13.12). */}
       <CodePanel
         sql={sql}
         meta={meta}
@@ -42,6 +49,7 @@ export default function Workspace({ session, onUpdate }) {
         onToggle={() => setOpen((v) => !v)}
         onSQLChange={setSQL}
         onExport={() => exportLast(session.id)}
+        latestSQL={latestSQL}
       />
     </>
   );

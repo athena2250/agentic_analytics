@@ -4,8 +4,8 @@ import { Send } from "lucide-react";
 /**
  * QuestionInput (plan §8): the question box at the foot of the conversation.
  *
- * A controlled input — the value lives in the conversation panel so a
- * suggestion chip can fill it — with auto-grow and Enter-to-send here.
+ * A controlled input — the value lives in the conversation panel, which owns
+ * turn-taking — with auto-grow and Enter-to-send here.
  */
 export default function QuestionInput({ value, onChange, onSend, disabled, hasData }) {
   const textareaRef = useRef();
