@@ -1,26 +1,15 @@
-import { useRef, useState } from "react";
-import { UploadCloud } from "lucide-react";
+import UploadDropzone from "./UploadDropzone.jsx";
 import UploadProgress from "./UploadProgress.jsx";
 
-// `formats` comes from GET /formats, which derives it from loader.py's reader
-// tables (plan §6) — nothing here is hardcoded. While it is null the format
-// line is omitted rather than guessed at.
+/**
+ * EmptyState (plan §8): the first-launch view, shown while the active session
+ * holds no tables. Upload-first — there is nothing to ask about yet.
+ *
+ * The dropzone itself (and its format list, which comes from GET /formats
+ * rather than a hardcoded list, §6) is UploadDropzone's; this component owns
+ * the framing copy and swaps in real per-request progress while a load runs.
+ */
 export default function EmptyState({ onUpload, uploadStage, uploadError, formats }) {
-  const [dragging, setDragging] = useState(false);
-  const inputRef = useRef();
-  const accepted = formats?.map((f) => `.${f}`).join(",");
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    setDragging(false);
-    onUpload(Array.from(e.dataTransfer.files));
-  };
-
-  const handleBrowse = (e) => {
-    onUpload(Array.from(e.target.files));
-    e.target.value = "";
-  };
-
   return (
     <div style={styles.root}>
       <div style={styles.content}>
@@ -32,35 +21,10 @@ export default function EmptyState({ onUpload, uploadStage, uploadError, formats
         {uploadStage ? (
           <UploadProgress stage={uploadStage} error={uploadError} />
         ) : (
-          <div
-            style={{ ...styles.dropzone, ...(dragging ? styles.dropzoneActive : {}) }}
-            onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={handleDrop}
-            onClick={() => inputRef.current?.click()}
-          >
-            <UploadCloud size={28} color="var(--accent)" />
-            <span style={styles.dropzoneText}>Drop files here or click to browse</span>
-            {formats?.length > 0 && (
-              <span style={styles.formats}>
-                {formats.map((f) => f.toUpperCase()).join(" · ")}
-              </span>
-            )}
-          </div>
+          <UploadDropzone onUpload={onUpload} formats={formats} />
         )}
 
-        {!uploadStage && uploadError && (
-          <p style={styles.error}>{uploadError}</p>
-        )}
-
-        <input
-          ref={inputRef}
-          type="file"
-          multiple
-          {...(accepted ? { accept: accepted } : {})}
-          style={{ display: "none" }}
-          onChange={handleBrowse}
-        />
+        {!uploadStage && uploadError && <p style={styles.error}>{uploadError}</p>}
       </div>
     </div>
   );
@@ -96,24 +60,5 @@ const styles = {
     margin: "0 0 28px",
     lineHeight: 1.5,
   },
-  dropzone: {
-    width: "100%",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: 8,
-    padding: "36px 24px",
-    border: "1.5px dashed var(--border2)",
-    borderRadius: 14,
-    cursor: "pointer",
-    transition: "background 0.15s, border-color 0.15s",
-    background: "var(--surface)",
-  },
-  dropzoneActive: {
-    background: "rgba(124,106,247,0.04)",
-    borderColor: "var(--accent)",
-  },
-  dropzoneText: { fontSize: 13, color: "var(--text)", fontWeight: 500 },
-  formats: { fontSize: 11, color: "var(--text-muted)" },
   error: { fontSize: 12, color: "#d9534f", marginTop: 12, lineHeight: 1.5 },
 };

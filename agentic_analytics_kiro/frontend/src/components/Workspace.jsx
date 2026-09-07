@@ -1,12 +1,14 @@
 import { useCallback, useState } from "react";
 import ChatWindow from "./ChatWindow.jsx";
 import CodePanel from "./CodePanel.jsx";
+import DatasetReadyBanner from "./DatasetReadyBanner.jsx";
 import { exportLast } from "../api.js";
 
 /**
- * Workspace view (plan §7): what the app shows once the active session holds a
- * dataset — the conversation panel plus the technical details drawer, which is
- * collapsed by default and opened per-message.
+ * Workspace view (plan §7/§8): what the app shows once the active session
+ * holds a dataset — the "Dataset ready" banner, the conversation panel, and
+ * the technical details drawer, which is collapsed by default and opened
+ * per-message.
  *
  * Drawer state lives here, not in App, because it belongs to one session's
  * conversation: App keys this component by session id, so switching sessions
@@ -26,6 +28,10 @@ export default function Workspace({ session, onUpdate }) {
   return (
     <>
       <div style={styles.conversation}>
+        {/* Announces the profile once per load, above the conversation rather
+            than inside it: the numbers describe the dataset as it stands now,
+            so they don't belong to any one past message (§8). */}
+        <DatasetReadyBanner profile={session.profile} name={session.name} />
         <ChatWindow session={session} onUpdate={onUpdate} onOpenTechnical={openTechnical} />
       </div>
 

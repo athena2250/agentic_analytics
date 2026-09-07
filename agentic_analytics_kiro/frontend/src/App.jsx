@@ -97,10 +97,7 @@ export default function App() {
           unified: result.unified ?? s.unified,
           uploadedFiles: [...s.uploadedFiles, ...newFiles],
           messages: [
-            // Only the newest upload carries the summary card: the card reads
-            // the session's current profile, so an older one would silently
-            // restate today's numbers as if they were that upload's.
-            ...s.messages.map((m) => (m.datasetReady ? { ...m, datasetReady: false } : m)),
+            ...s.messages,
             {
               id: Date.now(),
               role: "assistant",
@@ -112,8 +109,6 @@ export default function App() {
               // Charting them would draw a "trend" out of the first few rows
               // of the file — a shape that isn't in the data.
               preview: true,
-              // Renders the "Dataset ready" card once GET /profile lands (§6).
-              datasetReady: true,
               text: extending
                 ? `Added ${names} to this dataset — queries now cover every table in this session.`
                 : `Loaded ${names}.`,

@@ -1,10 +1,12 @@
 import ResultTable from "./ResultTable.jsx";
 import ResultChart from "./ResultChart.jsx";
 import FindingsBlock, { deriveKPIs } from "./FindingsBlock.jsx";
-import DatasetSummaryCard from "./DatasetSummaryCard.jsx";
-import { Database, User, TrendingUp, SlidersHorizontal, Inbox, Loader2, AlertTriangle, RotateCw } from "lucide-react";
+import ActivityTrace from "./ActivityTrace.jsx";
+import ForecastBlock from "./ForecastBlock.jsx";
+import TechnicalDetailsToggle from "./TechnicalDetailsToggle.jsx";
+import { Database, User, Inbox, AlertTriangle, RotateCw } from "lucide-react";
 
-export default function MessageBubble({ msg, profile, datasetName, onOpenTechnical, onRetry, canRetry = true }) {
+export default function MessageBubble({ msg, onOpenTechnical, onRetry, canRetry = true }) {
   const isUser = msg.role === "user";
 
   // Findings are derived from the result's shape only — never from column names.
@@ -32,24 +34,13 @@ export default function MessageBubble({ msg, profile, datasetName, onOpenTechnic
         {/* ── AI ── */}
         {!isUser && (
           <>
-            {/* Activity — one label for the one blocking backend step /query actually runs.
-                No multi-step trace until the backend emits real steps (plan §10). */}
-            {msg.loading && (
-              <div style={styles.activity}>
-                <Loader2 size={13} style={styles.spinner} />
-                <span>Generating and validating query…</span>
-              </div>
-            )}
+            {/* Activity — one label for the one blocking backend step /query
+                actually runs; a real step list only once the backend emits one
+                (plan §10). */}
+            {msg.loading && <ActivityTrace steps={msg.steps} />}
 
             {/* ── 1. Narrative: the answer, stated first ── */}
             {msg.text && <p style={styles.aiText}>{msg.text}</p>}
-
-            {/* ── 1b. Dataset ready: the profiling result, stated as a card
-                   rather than a sentence (plan §6). Appears once GET /profile
-                   returns; if profiling failed there is simply no card. ── */}
-            {msg.datasetReady && profile && (
-              <DatasetSummaryCard profile={profile} name={datasetName} variant="full" />
-            )}
 
             {/* ── 2. Findings: insight narrative + KPI cards ── */}
             <FindingsBlock narrative={msg.insights ?? null} kpis={kpis} />
@@ -88,24 +79,7 @@ export default function MessageBubble({ msg, profile, datasetName, onOpenTechnic
               </div>
             )}
 
-            {msg.forecast?.length > 0 && (
-              <div style={styles.section}>
-                <div style={styles.sectionLabel}>
-                  <TrendingUp size={12} />
-                  {msg.forecast.length}-day forecast
-                </div>
-                <ResultChart
-                  columns={Object.keys(msg.forecast[0])}
-                  rows={msg.forecast}
-                  totalRows={msg.forecast.length}
-                />
-                <ResultTable
-                  columns={Object.keys(msg.forecast[0])}
-                  rows={msg.forecast}
-                  totalRows={msg.forecast.length}
-                />
-              </div>
-            )}
+            <ForecastBlock forecast={msg.forecast} />
 
             {/* Error — stated as a failed turn, with the question offered back
                 for another attempt rather than requiring a retype (plan §13.8). */}
@@ -131,16 +105,7 @@ export default function MessageBubble({ msg, profile, datasetName, onOpenTechnic
             )}
 
             {/* ── 5. Technical detail: last, and behind one click (plan §6, §7) ── */}
-            {msg.sql && (
-              <button
-                style={styles.techToggle}
-                onClick={() => onOpenTechnical?.(msg)}
-                title="Show the SQL and execution detail for this answer"
-              >
-                <SlidersHorizontal size={12} />
-                <span>Technical details</span>
-              </button>
-            )}
+            {msg.sql && <TechnicalDetailsToggle onOpen={() => onOpenTechnical?.(msg)} />}
           </>
         )}
       </div>
@@ -200,40 +165,7 @@ const styles = {
   },
   userText: { fontSize: 14, lineHeight: 1.6, color: "#fff" },
   aiText: { fontSize: 14, color: "var(--text)", lineHeight: 1.6 },
-  activity: {
-    display: "flex",
-    alignItems: "center",
-    gap: 7,
-    padding: "2px 0",
-    fontSize: 13,
-    color: "var(--text-muted)",
-  },
-  spinner: { animation: "spin 1s linear infinite", flexShrink: 0 },
-  techToggle: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 5,
-    background: "none",
-    border: "1px solid var(--border)",
-    color: "var(--text-muted)",
-    borderRadius: 6,
-    padding: "3px 9px",
-    fontSize: 11,
-    fontWeight: 500,
-    cursor: "pointer",
-    alignSelf: "flex-start",
-  },
   section: { display: "flex", flexDirection: "column", gap: 5 },
-  sectionLabel: {
-    display: "flex",
-    alignItems: "center",
-    gap: 5,
-    fontSize: 11,
-    fontWeight: 600,
-    color: "var(--text-muted)",
-    textTransform: "uppercase",
-    letterSpacing: "0.04em",
-  },
   emptyResult: {
     display: "flex",
     alignItems: "flex-start",

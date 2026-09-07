@@ -1,11 +1,10 @@
-import { useState, useRef } from "react";
-import {
-  Upload, FileText, ChevronDown, ChevronRight,
-  Plus, MessageSquare, Pencil, Check, Trash2, Database
-} from "lucide-react";
+import { useState } from "react";
+import { Upload, FileText, ChevronDown, ChevronRight, Plus, Database } from "lucide-react";
 import DatasetSummaryCard from "./DatasetSummaryCard.jsx";
 import SchemaExplorer from "./SchemaExplorer.jsx";
 import UploadProgress from "./UploadProgress.jsx";
+import UploadDropzone, { useFilePicker, useDropTarget } from "./UploadDropzone.jsx";
+import SessionList from "./SessionList.jsx";
 
 function formatSize(bytes) {
   if (!bytes) return "";
@@ -15,17 +14,10 @@ function formatSize(bytes) {
   return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 }
 
-// One session = one dataset, so each row says which dataset it holds.
-function datasetLabel(session) {
-  const tables = Object.keys(session.tables ?? {}).length;
-  const files = session.uploadedFiles?.length ?? 0;
-  if (!files) return "No dataset yet";
-  return `${tables} table${tables === 1 ? "" : "s"} · ${files} file${files === 1 ? "" : "s"}`;
-}
-
 /**
- * Sidebar (plan §7, evolved from LeftPanel): dataset files, the active
- * dataset's summary, a collapsible schema explorer, and the sessions list.
+ * Sidebar (plan §7/§8, evolved from LeftPanel): the dataset files (via
+ * UploadDropzone), the active dataset's summary, a collapsible schema
+ * explorer, and the sessions list (via SessionList).
  * Renders whatever the profile reports — it knows no column names in advance.
  */
 export default function Sidebar({
@@ -33,40 +25,17 @@ export default function Sidebar({
   onSelect, onNew, onRename, onUpload, uploading,
   uploadStage, uploadError, formats
 }) {
-  // Accepted extensions come from GET /formats (derived from loader.py's
-  // readers), so the picker can't offer a format the backend would reject (§6).
-  const accepted = formats?.map((f) => `.${f}`).join(",");
   const [filesOpen, setFilesOpen] = useState(true);
   const [chatsOpen, setChatsOpen] = useState(true);
-  const [dragging, setDragging] = useState(false);
-  const [editingId, setEditingId] = useState(null);
-  const [draft, setDraft] = useState("");
-  const inputRef = useRef();
 
   const uploadedFiles = activeSession?.uploadedFiles ?? [];
 
-  const handleDrop = (e) => {
-    e.preventDefault();
-    setDragging(false);
-    if (!activeSession) return;
-    onUpload(Array.from(e.dataTransfer.files));
-  };
-
-  const handleBrowse = (e) => {
-    if (activeSession) onUpload(Array.from(e.target.files));
-    e.target.value = "";
-  };
-
-  const startEdit = (e, s) => {
-    e.stopPropagation();
-    setEditingId(s.id);
-    setDraft(s.name);
-  };
-
-  const commitEdit = (id) => {
-    if (draft.trim()) onRename(id, draft.trim());
-    setEditingId(null);
-  };
+  // Upload plumbing lives in UploadDropzone: the picker drives the section
+  // header's button and the "add to this dataset" row, while the whole panel
+  // is a drop target. Both are inert without a session to upload into.
+  const canUpload = Boolean(activeSession);
+  const { open: openPicker, input: fileInput } = useFilePicker(onUpload, formats, canUpload);
+  const { dragging, handlers: dropHandlers } = useDropTarget(onUpload, canUpload);
 
   return (
     <aside
@@ -74,9 +43,7 @@ export default function Sidebar({
         ...styles.panel,
         ...(dragging ? styles.panelDragging : {}),
       }}
-      onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-      onDragLeave={() => setDragging(false)}
-      onDrop={handleDrop}
+      {...dropHandlers}
     >
       {/* ── Logo ── */}
       <div style={styles.logo}>
@@ -92,7 +59,7 @@ export default function Sidebar({
           <button
             style={styles.addBtn}
             title="Add files to this dataset"
-            onClick={(e) => { e.stopPropagation(); inputRef.current?.click(); }}
+            onClick={(e) => { e.stopPropagation(); openPicker(); }}
           >
             <Upload size={12} />
           </button>
@@ -102,13 +69,12 @@ export default function Sidebar({
           <div style={styles.sectionBody}>
             {/* Drop hint when empty */}
             {uploadedFiles.length === 0 && !uploadStage && (
-              <div
-                style={styles.dropHint}
-                onClick={() => inputRef.current?.click()}
-              >
-                <Upload size={14} color="var(--text-muted)" />
-                <span style={styles.dropHintText}>Drop files or click to upload</span>
-              </div>
+              <UploadDropzone
+                variant="compact"
+                onUpload={onUpload}
+                formats={formats}
+                disabled={!canUpload}
+              />
             )}
 
             {/* Real per-request progress, not a spinner (plan §6, §10) */}
@@ -128,7 +94,7 @@ export default function Sidebar({
               <>
                 <button
                   style={styles.uploadMoreBtn}
-                  onClick={() => inputRef.current?.click()}
+                  onClick={openPicker}
                   disabled={uploading}
                 >
                   <Upload size={11} />
@@ -187,60 +153,17 @@ export default function Sidebar({
         </button>
 
         {chatsOpen && (
-          <div style={styles.chatList}>
-            {sessions.map((s) => (
-              <div
-                key={s.id}
-                style={{
-                  ...styles.chatRow,
-                  ...(s.id === activeId ? styles.chatRowActive : {}),
-                }}
-                onClick={() => onSelect(s.id)}
-              >
-                <MessageSquare size={13} style={{ flexShrink: 0, opacity: 0.5 }} />
-
-                {editingId === s.id ? (
-                  <input
-                    autoFocus
-                    value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
-                    onBlur={() => commitEdit(s.id)}
-                    onKeyDown={(e) => e.key === "Enter" && commitEdit(s.id)}
-                    style={styles.renameInput}
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                ) : (
-                  <div style={styles.chatMeta}>
-                    <span style={styles.chatName}>{s.name}</span>
-                    <span style={styles.chatDataset}>{datasetLabel(s)}</span>
-                  </div>
-                )}
-
-                {s.id === activeId && editingId !== s.id && (
-                  <button style={styles.rowAction} onClick={(e) => startEdit(e, s)}>
-                    <Pencil size={11} />
-                  </button>
-                )}
-                {editingId === s.id && (
-                  <button style={styles.rowAction} onClick={() => commitEdit(s.id)}>
-                    <Check size={11} />
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
+          <SessionList
+            sessions={sessions}
+            activeId={activeId}
+            onSelect={onSelect}
+            onRename={onRename}
+          />
         )}
       </div>
 
-      {/* Hidden file input */}
-      <input
-        ref={inputRef}
-        type="file"
-        multiple
-        {...(accepted ? { accept: accepted } : {})}
-        style={{ display: "none" }}
-        onChange={handleBrowse}
-      />
+      {/* Hidden file input, owned by UploadDropzone's picker */}
+      {fileInput}
 
       <div style={styles.footer}>
         Powered by Ollama · DuckDB
@@ -312,18 +235,6 @@ const styles = {
     flexDirection: "column",
     gap: 2,
   },
-  dropHint: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: 5,
-    padding: "14px 8px",
-    border: "1.5px dashed var(--border2)",
-    borderRadius: 8,
-    cursor: "pointer",
-    margin: "4px 0",
-  },
-  dropHintText: { fontSize: 11, color: "var(--text-muted)", textAlign: "center" },
   fileRow: {
     display: "flex",
     alignItems: "center",
@@ -384,69 +295,6 @@ const styles = {
     whiteSpace: "nowrap",
   },
   tableCols: { fontSize: 10, color: "var(--text-muted)" },
-  chatList: {
-    flex: 1,
-    overflowY: "auto",
-    padding: "2px 8px 8px",
-    display: "flex",
-    flexDirection: "column",
-    gap: 1,
-  },
-  chatRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 7,
-    padding: "6px 8px",
-    borderRadius: 7,
-    cursor: "pointer",
-    color: "var(--text-muted)",
-    fontSize: 12,
-    userSelect: "none",
-    transition: "background 0.1s",
-  },
-  chatRowActive: {
-    background: "var(--surface2)",
-    color: "var(--text)",
-  },
-  chatMeta: {
-    flex: 1,
-    display: "flex",
-    flexDirection: "column",
-    minWidth: 0,
-    gap: 1,
-  },
-  chatName: {
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  chatDataset: {
-    fontSize: 10,
-    color: "var(--text-muted)",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  rowAction: {
-    background: "none",
-    border: "none",
-    color: "var(--text-muted)",
-    display: "flex",
-    alignItems: "center",
-    padding: 2,
-    flexShrink: 0,
-    opacity: 0.6,
-  },
-  renameInput: {
-    flex: 1,
-    background: "var(--surface2)",
-    border: "1px solid var(--border)",
-    borderRadius: 4,
-    color: "var(--text)",
-    fontSize: 12,
-    padding: "1px 5px",
-    outline: "none",
-  },
   footer: {
     padding: "10px 14px",
     fontSize: 10,

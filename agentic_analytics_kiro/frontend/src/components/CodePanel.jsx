@@ -3,16 +3,17 @@ import {
   SlidersHorizontal, Copy, Check, RotateCcw, Download,
   PanelRightOpen, PanelRightClose,
 } from "lucide-react";
+import SQLView from "./SQLView.jsx";
+import ExecutionMeta from "./ExecutionMeta.jsx";
 
 /**
  * Technical Details drawer (plan §7/§8): SQL editor + execution meta.
  * Collapsed to a rail by default — the answer in the conversation is primary,
  * this is opened on demand from a message's "Technical details" button.
  *
- * Every meta field shown here is either returned by /query or derived from the
- * SQL text client-side. Nothing is inferred that the backend doesn't report —
- * notably, SQL validation status is not in the /query response, so it is not
- * displayed rather than guessed at.
+ * Composed of SQLView (the editor) and ExecutionMeta (how the answer was
+ * produced); this file owns the drawer chrome — rail, header, copy/reset,
+ * export — and the SQL draft the user may edit.
  */
 export default function CodePanel({ sql, meta, open, onToggle, onSQLChange, onExport }) {
   const [copied, setCopied] = useState(false);
@@ -96,15 +97,9 @@ export default function CodePanel({ sql, meta, open, onToggle, onSQLChange, onEx
         </div>
       ) : (
         <>
-          <div style={styles.sectionLabel}>SQL · DuckDB dialect · editable</div>
-          <textarea
-            style={styles.editor}
+          <SQLView
             value={localSQL}
-            onChange={(e) => {
-              setLocalSQL(e.target.value);
-              onSQLChange(e.target.value);
-            }}
-            spellCheck={false}
+            onChange={(next) => { setLocalSQL(next); onSQLChange(next); }}
           />
           <ExecutionMeta meta={meta} />
           {onExport && (
@@ -118,34 +113,6 @@ export default function CodePanel({ sql, meta, open, onToggle, onSQLChange, onEx
         </>
       )}
     </aside>
-  );
-}
-
-function ExecutionMeta({ meta }) {
-  if (!meta) return null;
-  const items = [];
-
-  if (meta.intent) items.push(["Intent", meta.intent]);
-  if (typeof meta.totalRows === "number") {
-    items.push(["Rows returned", meta.totalRows.toLocaleString()]);
-  }
-  if (meta.tables?.length) items.push(["Tables referenced", meta.tables.join(", ")]);
-  if (typeof meta.durationMs === "number") {
-    items.push(["Round trip", `${Math.round(meta.durationMs).toLocaleString()} ms`]);
-  }
-
-  if (!items.length) return null;
-
-  return (
-    <div style={styles.meta}>
-      <div style={styles.sectionLabel}>Execution</div>
-      {items.map(([k, v]) => (
-        <div key={k} style={styles.metaRow}>
-          <span style={styles.metaKey}>{k}</span>
-          <span style={styles.metaVal} title={String(v)}>{v}</span>
-        </div>
-      ))}
-    </div>
   );
 }
 
@@ -237,51 +204,6 @@ const styles = {
     color: "var(--text-muted)",
     textAlign: "center",
     lineHeight: 1.5,
-  },
-  sectionLabel: {
-    padding: "8px 14px 4px",
-    fontSize: 10,
-    fontWeight: 600,
-    color: "var(--text-muted)",
-    textTransform: "uppercase",
-    letterSpacing: "0.06em",
-    flexShrink: 0,
-  },
-  editor: {
-    flex: 1,
-    minHeight: 120,
-    background: "var(--surface2)",
-    border: "none",
-    outline: "none",
-    resize: "none",
-    padding: "12px 14px",
-    fontSize: 12,
-    fontFamily: "var(--mono)",
-    color: "var(--text)",
-    lineHeight: 1.7,
-    overflowY: "auto",
-  },
-  meta: {
-    borderTop: "1px solid var(--border)",
-    paddingBottom: 8,
-    flexShrink: 0,
-  },
-  metaRow: {
-    display: "flex",
-    alignItems: "baseline",
-    gap: 8,
-    padding: "3px 14px",
-    fontSize: 11,
-  },
-  metaKey: { color: "var(--text-muted)", flexShrink: 0 },
-  metaVal: {
-    color: "var(--text)",
-    marginLeft: "auto",
-    textAlign: "right",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-    minWidth: 0,
   },
   exportRow: {
     borderTop: "1px solid var(--border)",

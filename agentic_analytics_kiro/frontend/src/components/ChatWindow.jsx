@@ -1,7 +1,6 @@
-import { useState, useRef, useEffect } from "react";
-import { Send } from "lucide-react";
-import MessageBubble from "./MessageBubble.jsx";
-import SuggestedQuestions from "./SuggestedQuestions.jsx";
+import { useState } from "react";
+import MessageList from "./MessageList.jsx";
+import QuestionInput from "./QuestionInput.jsx";
 import { runQuery } from "../api.js";
 
 // Which of the session's known tables this SQL actually names. Derived by
@@ -14,22 +13,15 @@ function tablesReferenced(sql, tableNames) {
   });
 }
 
+/**
+ * ConversationPanel (plan §8, evolved from ChatWindow): owns one session's
+ * turn-taking — asking, retrying, and handing an answer's detail to the
+ * technical drawer. Rendering the stream is MessageList's job and the question
+ * box is QuestionInput's.
+ */
 export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const bottomRef = useRef();
-  const textareaRef = useRef();
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [session.messages]);
-
-  useEffect(() => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    ta.style.height = "auto";
-    ta.style.height = Math.min(ta.scrollHeight, 160) + "px";
-  }, [input]);
 
   const hasData = Object.keys(session.tables).length > 0;
 
@@ -112,10 +104,6 @@ export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
     runTurn(q, userId + 1);
   };
 
-  const handleKey = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
-  };
-
   return (
     <div style={styles.root}>
       {/* ── Top bar ── */}
@@ -129,55 +117,25 @@ export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
       </div>
 
       {/* ── Messages ── */}
-      <div style={styles.messages}>
-        {/* Message list */}
-        {session.messages.map((msg) => (
-          <MessageBubble
-            key={msg.id}
-            msg={msg}
-            profile={session.profile}
-            datasetName={session.name}
-            onOpenTechnical={openTechnical}
-            onRetry={(m) => runTurn(m.retryQuery, m.id)}
-            canRetry={!loading}
-          />
-        ))}
-        {/* Suggestion chips — derived from the dataset profile, shown until the
-            first question is asked. The upload result is itself a message, so
-            the gate is "no user turn yet", not "no messages". */}
-        {!session.messages.some((m) => m.role === "user") && hasData && (
-          <SuggestedQuestions profile={session.profile} onPick={setInput} />
-        )}
-
-        <div ref={bottomRef} style={{ height: 1 }} />
-      </div>
+      <MessageList
+        messages={session.messages}
+        profile={session.profile}
+        datasetName={session.name}
+        hasData={hasData}
+        onOpenTechnical={openTechnical}
+        onRetry={(m) => runTurn(m.retryQuery, m.id)}
+        canRetry={!loading}
+        onPickSuggestion={setInput}
+      />
 
       {/* ── Input ── */}
-      <div style={styles.inputArea}>
-        <div style={styles.inputBox}>
-          <textarea
-            ref={textareaRef}
-            style={styles.textarea}
-            placeholder={hasData ? "What would you like to investigate?" : "Upload data first, then ask questions…"}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKey}
-            rows={1}
-            disabled={loading}
-          />
-          <button
-            style={{
-              ...styles.sendBtn,
-              ...(!input.trim() || loading ? styles.sendDisabled : {}),
-            }}
-            onClick={send}
-            disabled={!input.trim() || loading}
-          >
-            <Send size={14} />
-          </button>
-        </div>
-        <p style={styles.hint}>Enter to send · Shift+Enter for new line</p>
-      </div>
+      <QuestionInput
+        value={input}
+        onChange={setInput}
+        onSend={send}
+        disabled={loading}
+        hasData={hasData}
+      />
     </div>
   );
 }
@@ -187,7 +145,9 @@ const styles = {
     flex: 1,
     display: "flex",
     flexDirection: "column",
-    height: "100vh",
+    // minHeight over a fixed 100vh: the banner above is a sibling in the same
+    // column, so the panel takes the space that's left rather than the screen.
+    minHeight: 0,
     overflow: "hidden",
     background: "var(--bg)",
   },
@@ -209,55 +169,4 @@ const styles = {
     borderRadius: 20,
     padding: "1px 8px",
   },
-  messages: {
-    flex: 1,
-    overflowY: "auto",
-    padding: "24px 28px",
-    display: "flex",
-    flexDirection: "column",
-    gap: 0,
-  },
-  inputArea: {
-    padding: "12px 20px 14px",
-    borderTop: "1px solid var(--border)",
-    background: "var(--surface)",
-    flexShrink: 0,
-  },
-  inputBox: {
-    display: "flex",
-    alignItems: "flex-end",
-    gap: 8,
-    background: "var(--bg)",
-    border: "1px solid var(--border)",
-    borderRadius: 12,
-    padding: "8px 8px 8px 14px",
-    boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
-  },
-  textarea: {
-    flex: 1,
-    background: "none",
-    border: "none",
-    outline: "none",
-    color: "var(--text)",
-    fontSize: 14,
-    lineHeight: 1.6,
-    resize: "none",
-    maxHeight: 160,
-    overflowY: "auto",
-  },
-  sendBtn: {
-    background: "var(--accent)",
-    border: "none",
-    color: "#fff",
-    borderRadius: 8,
-    width: 32,
-    height: 32,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-    transition: "opacity 0.15s",
-  },
-  sendDisabled: { opacity: 0.3, cursor: "not-allowed" },
-  hint: { fontSize: 11, color: "var(--text-muted)", marginTop: 5, textAlign: "center" },
 };
