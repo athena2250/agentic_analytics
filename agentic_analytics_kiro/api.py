@@ -33,7 +33,10 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from config import SPELL_CORRECTIONS, LLM_URL, LLM_MODEL, CACHE_TTL
 from predictor import predict_sales, infer_date_column, infer_measure_column
-from loader import load_files, schema_summary, rich_schema_summary, profile_tables, pick_default_columns, supported_formats
+from loader import (
+    load_files, schema_summary, rich_schema_summary, profile_tables,
+    pick_default_columns, supported_formats, dataset_summary,
+)
 from dateutil import parser as date_parser
 
 app = FastAPI(title="Agentic Analytics API")
@@ -76,6 +79,10 @@ class Session:
         self.unified: str | None = None
         self.history: list[dict] = []
         self.cache: dict[str, tuple[pd.DataFrame, float]] = {}
+        # Profiling result, computed once per set of loaded tables and reused
+        # by /upload, /profile and the fallback SQL path. Invalidated (set to
+        # None) whenever new files land, so it can never describe stale tables.
+        self.profile: dict | None = None
 
 _sessions: dict[str, Session] = {}
 
@@ -83,6 +90,14 @@ def get_session(sid: str) -> Session:
     if sid not in _sessions:
         raise HTTPException(status_code=404, detail="Session not found")
     return _sessions[sid]
+
+
+def _ensure_profile(session: Session) -> dict:
+    """Profile the session's tables, reusing the cached result when the tables
+    haven't changed since it was computed."""
+    if session.profile is None:
+        session.profile = profile_tables(session.tables, session.con)
+    return session.profile
 
 # ── Helpers (ported from app.py) ──────────────────────────────────────────────
 
@@ -130,6 +145,18 @@ def _extract_sql(text: str) -> str:
     text = _SQL_FENCE_RE.sub("", text)
     m = _SQL_EXTRACT_RE.search(text)
     return m.group(1).strip() if m else ""
+
+def _tables_used(sql: str, session: Session) -> list[str]:
+    """Which of the session's known tables (and unified view) this SQL names.
+    Matched against real table names — never a hardcoded one."""
+    names = list(session.tables) + ([session.unified] if session.unified else [])
+    used = []
+    for name in names:
+        # Optional quotes on either side, so a quoted "table" matches too.
+        if re.search(rf'(^|[^\w"])"?{re.escape(name)}"?($|[^\w"])', sql, re.IGNORECASE):
+            used.append(name)
+    return used
+
 
 def _validate_sql(sql: str, session: Session) -> tuple[bool, str]:
     """Validate by doing a DuckDB dry-run (EXPLAIN). Catches real errors, not fake ones."""
@@ -195,7 +222,7 @@ Return ONLY the corrected SQL, no explanation:"""
 
 def _fallback_sql(session: Session) -> str:
     tname = next(iter(session.tables))  # always a real table, not the view
-    picks = pick_default_columns(session.tables, session.con, tname)
+    picks = pick_default_columns(session.tables, session.con, tname, profile=_ensure_profile(session))
     measure, dimension = picks["measure"], picks["dimension"]
     if measure and dimension:
         return f'SELECT "{dimension}", SUM("{measure}") AS "{measure}" FROM {tname} GROUP BY "{dimension}"'
@@ -288,14 +315,25 @@ async def upload_files(sid: str, files: list[UploadFile] = File(...)):
         session.tables.update(result["tables"])
         if result["unified"]:
             session.unified = result["unified"]
+        session.profile = None  # new tables — any cached profile is now stale
 
         schema = {t: cols for t, cols in session.tables.items()}
         sample = result["sample"].to_dict(orient="records")
+
+        # Row/column counts and date span come back with the upload itself
+        # (plan §9.4) so the UI never has to infer the shape of the dataset
+        # from the 5-row sample above. Best-effort: a profiling failure costs
+        # the summary, not the upload.
+        try:
+            summary = dataset_summary(_ensure_profile(session))
+        except Exception:
+            summary = None
 
         return _json({
             "tables": schema,
             "unified": session.unified,
             "sample": sample,
+            "summary": summary,
             "files_loaded": [f.filename for f in files],
         })
     finally:
@@ -313,8 +351,14 @@ def get_profile(sid: str):
     session = get_session(sid)
     if not session.tables:
         raise HTTPException(status_code=400, detail="No data loaded. Upload files first.")
-    profile = profile_tables(session.tables, session.con)
-    return _json({"tables": profile, "unified": session.unified})
+    profile = _ensure_profile(session)
+    return _json({
+        "tables": profile,
+        "unified": session.unified,
+        # The same structured summary the upload response carries, so both
+        # entry points describe the dataset identically (plan §9.4).
+        "summary": dataset_summary(profile),
+    })
 
 
 class QueryRequest(BaseModel):
@@ -326,19 +370,34 @@ def run_query(sid: str, body: QueryRequest):
     if not session.tables:
         raise HTTPException(status_code=400, detail="No data loaded. Upload files first.")
 
+    started = time.perf_counter()
     query = _normalize_dates(_normalize(body.query))
     intent = _detect_intent(query)
 
     sql = _generate_sql(query, session)
     valid, msg = _validate_sql(sql, session)
 
+    # How the SQL that ran was arrived at, reported to the UI rather than left
+    # for it to guess (plan §9.4): validated first try, repaired after N fix
+    # attempts, or abandoned for the schema-driven fallback.
+    fix_attempts = 0
     for _ in range(2):
         if valid:
             break
+        fix_attempts += 1
         sql = _fix_sql(sql, session, msg)
         valid, msg = _validate_sql(sql, session)
 
-    if not valid:
+    if valid:
+        validation = {
+            "status": "repaired" if fix_attempts else "valid",
+            "fix_attempts": fix_attempts,
+            "error": None,
+        }
+    else:
+        # The generated SQL never validated; the fallback is schema-driven and
+        # answers a different question, so the UI is told plainly.
+        validation = {"status": "fallback", "fix_attempts": fix_attempts, "error": msg}
         sql = _fallback_sql(session)
 
     result_df = _get_cached(session, sql)
@@ -361,6 +420,11 @@ def run_query(sid: str, body: QueryRequest):
         "rows": result_df.head(200).to_dict(orient="records"),
         "columns": list(result_df.columns),
         "total_rows": len(result_df),
+        # Execution detail for the technical drawer (plan §8, §9.4), measured
+        # server-side instead of re-derived from the SQL text by the client.
+        "tables_used": _tables_used(sql, session),
+        "validation": validation,
+        "duration_ms": round((time.perf_counter() - started) * 1000, 1),
     }
 
     if intent == "predict":

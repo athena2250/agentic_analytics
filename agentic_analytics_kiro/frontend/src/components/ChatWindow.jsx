@@ -3,16 +3,6 @@ import MessageList from "./MessageList.jsx";
 import QuestionInput from "./QuestionInput.jsx";
 import { runQuery } from "../api.js";
 
-// Which of the session's known tables this SQL actually names. Derived by
-// matching real table names against the SQL text — never a hardcoded name.
-function tablesReferenced(sql, tableNames) {
-  if (!sql || !tableNames?.length) return [];
-  return tableNames.filter((t) => {
-    const esc = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp(`(^|[^\\w"])"?${esc}"?($|[^\\w"])`, "i").test(sql);
-  });
-}
-
 /**
  * ConversationPanel (plan §8, evolved from ChatWindow): owns one session's
  * turn-taking — asking, retrying, and handing an answer's detail to the
@@ -25,15 +15,19 @@ export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
 
   const hasData = Object.keys(session.tables).length > 0;
 
-  // Meta is derived from the /query response plus the SQL text — no invented fields.
+  // Meta comes straight from the /query response — the backend reports which
+  // tables it read, how its SQL validated, and how long it took (plan §9.4),
+  // so nothing here is re-derived from the SQL text or invented.
   const openTechnical = (msg, open = true) => {
     onOpenTechnical?.(
       msg.sql,
       {
         intent: msg.intent ?? null,
         totalRows: msg.total_rows,
+        tables: msg.tables_used ?? [],
+        validation: msg.validation ?? null,
+        serverMs: msg.duration_ms ?? null,
         durationMs: msg.durationMs,
-        tables: tablesReferenced(msg.sql, Object.keys(session.tables)),
       },
       open
     );
@@ -72,8 +66,11 @@ export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
         forecast: data.forecast ?? null,
         insights: data.insights ?? null,
         intent: data.intent ?? null,
-        // Client-measured round trip — the backend does not report its own
-        // execution time, so this is labeled as a round trip, not query time.
+        tables_used: data.tables_used ?? [],
+        validation: data.validation ?? null,
+        duration_ms: data.duration_ms ?? null,
+        // Client-measured round trip, shown alongside the backend's own
+        // server-side timing rather than in place of it.
         durationMs: performance.now() - startedAt,
         text: null,
       };

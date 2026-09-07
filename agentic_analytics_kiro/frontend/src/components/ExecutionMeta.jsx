@@ -1,12 +1,19 @@
+// How the SQL that ran was arrived at, as reported by /query. "fallback"
+// means the generated SQL never validated and a schema-driven default ran
+// instead — the answer is to a different question, so it is said plainly.
+const VALIDATION_LABELS = {
+  valid: "Validated on first attempt",
+  repaired: "Repaired, then validated",
+  fallback: "Generated SQL failed — schema-driven fallback used",
+};
+
 /**
  * ExecutionMeta (plan §8): how the answer was produced — intent, rows
- * returned, tables referenced, round trip.
+ * returned, tables referenced, validation, timing.
  *
- * Every field is either returned by /query or derived client-side from the SQL
- * text; nothing is inferred that the backend doesn't report. Notably, SQL
- * validation status is *not* in the /query response, so it is absent here
- * rather than guessed at (§9.6 would add it). A field the response omitted is
- * dropped from the list rather than shown as 0 or "unknown".
+ * Every field is returned by /query (plan §9.4); nothing is inferred that the
+ * backend doesn't report. A field the response omitted is dropped from the
+ * list rather than shown as 0 or "unknown".
  */
 export default function ExecutionMeta({ meta }) {
   if (!meta) return null;
@@ -17,9 +24,21 @@ export default function ExecutionMeta({ meta }) {
     items.push(["Rows returned", meta.totalRows.toLocaleString()]);
   }
   if (meta.tables?.length) items.push(["Tables referenced", meta.tables.join(", ")]);
+  if (meta.validation?.status) {
+    const label = VALIDATION_LABELS[meta.validation.status] ?? meta.validation.status;
+    const attempts = meta.validation.fix_attempts;
+    items.push([
+      "SQL validation",
+      attempts ? `${label} (${attempts} fix attempt${attempts > 1 ? "s" : ""})` : label,
+    ]);
+  }
+  if (typeof meta.serverMs === "number") {
+    // Backend-reported: the time the server spent generating, validating and
+    // running the query.
+    items.push(["Server time", `${Math.round(meta.serverMs).toLocaleString()} ms`]);
+  }
   if (typeof meta.durationMs === "number") {
-    // Client-measured: the backend does not report its own execution time, so
-    // this is labeled a round trip rather than passed off as query time.
+    // Client-measured, so it is labeled a round trip rather than query time.
     items.push(["Round trip", `${Math.round(meta.durationMs).toLocaleString()} ms`]);
   }
 

@@ -4,34 +4,13 @@ function formatNum(n) {
   return n.toLocaleString();
 }
 
-function dateSpanLabel(profile) {
-  let earliest = null;
-  let latest = null;
-  for (const table of Object.values(profile.tables ?? {})) {
-    for (const col of table.columns ?? []) {
-      if (col.role !== "date" || col.confidence < 0.6) continue;
-      const min = col.min != null ? new Date(col.min) : null;
-      const max = col.max != null ? new Date(col.max) : null;
-      if (min && !isNaN(min) && (!earliest || min < earliest)) earliest = min;
-      if (max && !isNaN(max) && (!latest || max > latest)) latest = max;
-    }
-  }
-  if (!earliest || !latest) return null;
-  const months = Math.max(
-    1,
-    Math.round((latest - earliest) / (1000 * 60 * 60 * 24 * 30))
-  );
-  return `${months} month${months > 1 ? "s" : ""} of data`;
-}
-
-// Quality badge (plan §7): a summary of the profile's own null statistics —
-// not a score invented client-side. Columns the backend couldn't measure
-// (null_pct === null) are excluded rather than counted as complete.
-function qualityBadge(cols) {
-  const measured = cols.filter((c) => typeof c.null_pct === "number");
-  if (!measured.length) return null;
-  const worst = Math.max(...measured.map((c) => c.null_pct));
-  const withGaps = measured.filter((c) => c.null_pct > 0).length;
+// Quality badge (plan §7): a restatement of the null statistics the backend's
+// summary reports — not a score invented client-side. Columns profiling
+// couldn't measure are excluded there rather than counted as complete.
+function qualityBadge(summary) {
+  const worst = summary.max_null_pct;
+  if (typeof worst !== "number") return null;
+  const withGaps = summary.columns_with_nulls ?? 0;
   if (worst === 0) return { label: "No missing values", tone: "good" };
   if (worst < 5) return { label: `${withGaps} field${withGaps > 1 ? "s" : ""} with few gaps`, tone: "good" };
   if (worst < 30) return { label: `Up to ${Math.round(worst)}% missing`, tone: "warn" };
@@ -39,9 +18,11 @@ function qualityBadge(cols) {
 }
 
 /**
- * Reads the profile and reports only what it actually says (plan §6): a stat
- * whose underlying number is missing is dropped from the line rather than
- * rendered as 0 or "?" — the card never claims a fact profiling didn't produce.
+ * Reads the `summary` block of GET /session/{sid}/profile and reports only
+ * what it actually says (plan §6, §9.4): row/column counts, date span and role
+ * counts are computed server-side over the full tables, so this card never
+ * re-derives them client-side or fills a gap with 0. A stat the backend
+ * returned as null is dropped from the line rather than rendered as "?".
  *
  * `variant`:
  *   "compact" — the persistent sidebar summary of the active dataset.
@@ -49,42 +30,27 @@ function qualityBadge(cols) {
  *               an upload, which is the §6 hand-off from loading to asking.
  */
 export default function DatasetSummaryCard({ profile, name, variant = "compact" }) {
-  if (!profile) return null;
+  const summary = profile?.summary;
+  if (!summary) return null;
 
   const full = variant === "full";
-  const tables = Object.values(profile.tables ?? {});
-  const allCols = tables.flatMap((t) => t.columns ?? []);
 
-  // Row count is only claimed when every profiled table reported one; a partial
-  // sum would understate the dataset without saying so.
-  const measuredRows = tables.filter((t) => typeof t.row_count === "number");
-  const rowCount =
-    tables.length > 0 && measuredRows.length === tables.length
-      ? measuredRows.reduce((sum, t) => sum + t.row_count, 0)
-      : null;
-  const colCount = allCols.length;
-
-  const counts = { date: 0, measure: 0, dimension: 0, identifier: 0, unknown: 0 };
-  for (const c of allCols) {
-    if (counts[c.role] != null) counts[c.role] += 1;
-    else counts.unknown += 1;
-  }
-  const uncertain = allCols.filter((c) => c.confidence < 0.6).length;
-
-  const span = dateSpanLabel(profile);
-  const quality = qualityBadge(allCols);
+  const counts = summary.role_counts ?? {};
+  const span = summary.date_span;
+  const quality = qualityBadge(summary);
+  const uncertain = summary.uncertain_columns ?? 0;
 
   const stats = [];
-  if (tables.length > 1) stats.push(`${tables.length} tables`);
-  if (rowCount != null) stats.push(`${formatNum(rowCount)} rows`);
-  if (colCount > 0) stats.push(`${formatNum(colCount)} columns`);
-  if (span) stats.push(span);
+  if (summary.table_count > 1) stats.push(`${summary.table_count} tables`);
+  if (typeof summary.row_count === "number") stats.push(`${formatNum(summary.row_count)} rows`);
+  if (summary.column_count > 0) stats.push(`${formatNum(summary.column_count)} columns`);
+  if (span?.months) stats.push(`${span.months} month${span.months > 1 ? "s" : ""} of data`);
 
   const detected = [
-    { key: "date", n: counts.date, icon: Calendar, noun: "date field" },
-    { key: "measure", n: counts.measure, icon: Hash, noun: "numerical field" },
-    { key: "dimension", n: counts.dimension, icon: Tag, noun: "categorical field" },
-    { key: "identifier", n: counts.identifier, icon: Key, noun: "identifier field" },
+    { key: "date", n: counts.date ?? 0, icon: Calendar, noun: "date field" },
+    { key: "measure", n: counts.measure ?? 0, icon: Hash, noun: "numerical field" },
+    { key: "dimension", n: counts.dimension ?? 0, icon: Tag, noun: "categorical field" },
+    { key: "identifier", n: counts.identifier ?? 0, icon: Key, noun: "identifier field" },
   ].filter((d) => d.n > 0);
 
   const s = full ? fullStyles : styles;

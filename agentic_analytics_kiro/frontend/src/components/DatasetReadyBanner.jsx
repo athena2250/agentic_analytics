@@ -13,8 +13,8 @@ import DatasetSummaryCard from "./DatasetSummaryCard.jsx";
  * upload (which re-profiles) brings it back with the new totals, while
  * dismissing it keeps it dismissed for that profile.
  *
- * Renders nothing when profiling produced nothing — a failed profile means no
- * banner, never a banner full of zeroes (§1).
+ * Renders nothing when profiling produced no summary — a failed profile means
+ * no banner, never a banner full of zeroes (§1).
  */
 export default function DatasetReadyBanner({ profile, name }) {
   const [dismissed, setDismissed] = useState(false);
@@ -22,8 +22,10 @@ export default function DatasetReadyBanner({ profile, name }) {
   // A new profile object means new numbers to announce.
   useEffect(() => { setDismissed(false); }, [profile]);
 
-  if (!profile || dismissed) return null;
-  if (!Object.keys(profile.tables ?? {}).length) return null;
+  // Keyed on the summary because that is what the card renders: the banner
+  // appears as soon as the upload response carries one (plan §9.4), and stays
+  // away entirely when profiling produced none.
+  if (!profile?.summary || dismissed) return null;
 
   return (
     <div style={styles.banner}>

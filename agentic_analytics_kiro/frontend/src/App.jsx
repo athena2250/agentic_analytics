@@ -95,6 +95,10 @@ export default function App() {
           name: !extending && !s.renamed ? datasetName(files) : s.name,
           tables: { ...s.tables, ...result.tables },
           unified: result.unified ?? s.unified,
+          // The upload response already carries the dataset's row/column
+          // counts and date span (plan §9.4), so the summary card can render
+          // a round trip before /profile returns the per-column detail.
+          profile: result.summary ? { tables: {}, summary: result.summary } : null,
           uploadedFiles: [...s.uploadedFiles, ...newFiles],
           messages: [
             ...s.messages,
@@ -121,11 +125,12 @@ export default function App() {
         const profile = await getProfile(sessionId);
         patchSession(sessionId, { profile });
       } catch (e) {
-        // The data is loaded and queryable; only the profile-derived extras
-        // (summary card, suggestions) are missing. Say so rather than
-        // reporting the whole upload as failed.
+        // The data is loaded and queryable; only the per-column detail
+        // (schema explorer, suggestions) is missing — the summary card still
+        // has the upload response's numbers. Say so rather than reporting the
+        // whole upload as failed.
         console.error("profile fetch failed", e);
-        setUploadError("Loaded, but column profiling failed — summary and suggestions are unavailable.");
+        setUploadError("Loaded, but column profiling failed — the schema explorer and suggestions are unavailable.");
       }
       setUploadStage("ready");
     } catch (err) {

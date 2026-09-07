@@ -257,12 +257,23 @@ def profile_tables(tables: dict[str, list[str]], con: duckdb.DuckDBPyConnection)
     return profiles
 
 
-def pick_default_columns(tables: dict[str, list[str]], con: duckdb.DuckDBPyConnection, table_name: str) -> dict:
+def pick_default_columns(
+    tables: dict[str, list[str]],
+    con: duckdb.DuckDBPyConnection,
+    table_name: str,
+    profile: dict | None = None,
+) -> dict:
     """
     Best-effort default measure/dimension/date column picks for a single table,
     used by fallback SQL generation. Returns {"measure": str|None, "dimension": str|None, "date": str|None}.
+
+    Pass an already-computed `profile` (as returned by profile_tables) to reuse
+    it instead of re-running the aggregate queries.
     """
-    profile = profile_tables({table_name: tables[table_name]}, con).get(table_name, {})
+    if profile is not None and table_name in profile:
+        profile = profile[table_name]
+    else:
+        profile = profile_tables({table_name: tables[table_name]}, con).get(table_name, {})
     picks = {"measure": None, "dimension": None, "date": None}
     for col in profile.get("columns", []):
         role = col["role"]
@@ -297,3 +308,78 @@ def rich_schema_summary(tables: dict[str, list[str]], con: duckdb.DuckDBPyConnec
                 lines.append(f"  {col}")
         lines.append("")
     return "\n".join(lines)
+
+
+_SPAN_CONFIDENCE_MIN = 0.6
+
+
+def _as_iso(value) -> str | None:
+    """ISO-format a DuckDB min/max value, or None if it isn't a date at all."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        parsed = pd.to_datetime(value, errors="coerce")
+        return None if pd.isna(parsed) else parsed.isoformat()
+    isoformat = getattr(value, "isoformat", None)
+    return isoformat() if callable(isoformat) else None
+
+
+def dataset_summary(profile: dict) -> dict:
+    """
+    Collapse a profile (from profile_tables) into the few numbers the
+    "Dataset ready" card reports (plan §6, §9.4), computed here rather than
+    client-side so the UI never re-derives them from a 5-row sample.
+
+    Every field is None when profiling didn't actually establish it — a number
+    that couldn't be measured is omitted, never reported as zero (plan §1).
+    """
+    tables = list(profile.values())
+    all_cols = [c for t in tables for c in t.get("columns", [])]
+
+    # Row count is only claimed when every profiled table reported one;
+    # a partial sum would understate the dataset without saying so.
+    measured = [t for t in tables if isinstance(t.get("row_count"), int)]
+    row_count = sum(t["row_count"] for t in measured) if tables and len(measured) == len(tables) else None
+
+    role_counts: dict[str, int] = {}
+    for col in all_cols:
+        role = col.get("role") or "unknown"
+        role_counts[role] = role_counts.get(role, 0) + 1
+
+    # Date span across columns confidently labeled as dates. A name-based guess
+    # (low confidence) is not allowed to invent a time range for the dataset.
+    starts, ends = [], []
+    for col in all_cols:
+        if col.get("role") != "date" or (col.get("confidence") or 0) < _SPAN_CONFIDENCE_MIN:
+            continue
+        lo, hi = _as_iso(col.get("min")), _as_iso(col.get("max"))
+        if lo:
+            starts.append(lo)
+        if hi:
+            ends.append(hi)
+
+    date_span = None
+    if starts and ends:
+        start, end = min(starts), max(ends)
+        days = (pd.Timestamp(end) - pd.Timestamp(start)).days
+        date_span = {
+            "start": start,
+            "end": end,
+            "days": days,
+            "months": max(1, round(days / 30)) if days >= 0 else None,
+        }
+
+    # Data quality, reported as the profile's own null statistics rather than
+    # an invented score. Columns profiling couldn't measure are excluded.
+    null_pcts = [c["null_pct"] for c in all_cols if isinstance(c.get("null_pct"), (int, float))]
+
+    return {
+        "table_count": len(tables),
+        "row_count": row_count,
+        "column_count": len(all_cols),
+        "date_span": date_span,
+        "role_counts": role_counts,
+        "uncertain_columns": sum(1 for c in all_cols if (c.get("confidence") or 0) < _SPAN_CONFIDENCE_MIN),
+        "max_null_pct": max(null_pcts) if null_pcts else None,
+        "columns_with_nulls": sum(1 for p in null_pcts if p > 0) if null_pcts else None,
+    }
