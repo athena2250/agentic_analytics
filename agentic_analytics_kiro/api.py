@@ -41,6 +41,11 @@ from analytical_context import (
     derive_context, describe_context, summarize_result, empty_context,
 )
 from anomaly import detect_anomalies, describe_anomalies
+from event_analysis import (
+    resolve_roles, resolve_windows, plan_sub_analyses, findings_for,
+    narrative_prompt,
+)
+from workbook import build_event_workbook
 from crossdataset import (
     infer_relationships, describe_relationships, plan_correlation,
     correlation_sql, correlate, describe_correlation,
@@ -103,6 +108,14 @@ class Session:
         # the next turn's SQL prompt as facts rather than prose. None until a
         # turn has run.
         self.context: dict | None = None
+        # The assembled event-analysis workbook (plan §17), held so `/export`
+        # returns the file this turn produced rather than regenerating SQL from
+        # a follow-up "export to excel". Cleared by every other kind of turn, so
+        # it can never be served for an answer it doesn't describe.
+        self.workbook: bytes | None = None
+        # The roles the last event-analysis turn resolved, kept so a follow-up
+        # can confirm or correct one without re-deriving the whole mapping.
+        self.roles: dict | None = None
 
 _sessions: dict[str, Session] = {}
 
@@ -220,8 +233,43 @@ def _normalize_dates(query: str) -> str:
             i += 1
     return " ".join(out)
 
+# A discrete occurrence in time. Deliberately not domain words: "sales" alone
+# is the subject of half of all ordinary questions, and routing those into a
+# five-query pipeline would be worse than the flat matching this replaces. "a
+# sales event happened yesterday" still matches — on "event" and "happened".
+_EVENT_REFERENCE = [
+    "event", "promotion", "promo", "launch", "happened", "took place",
+    "black friday", "cyber monday", "holiday", "incident", "outage",
+    "flash sale", "open day", "roadshow",
+]
+
+# …and a request to analyse it, rather than to look one number up.
+_ANALYSIS_REQUEST = [
+    "analy", "break down", "breakdown", "deep dive", "deep-dive", "report",
+    "workbook", "investigate", "metrics", "cross-shop", "cross shop",
+    "cross-store", "write up", "write-up", "summar", "impact",
+]
+
+
+def _is_event_analysis(q: str) -> bool:
+    """Match on co-occurrence rather than on any single keyword (plan §17.6).
+
+    Flat keyword routing is already the weakest part of this system, and adding
+    a sixth list to it would deepen the problem rather than work around it. Two
+    independent signals have to be present: something that names a discrete
+    occurrence, and something that asks for it to be analysed.
+    """
+    return (any(k in q for k in _EVENT_REFERENCE)
+            and any(k in q for k in _ANALYSIS_REQUEST))
+
+
 _INTENT_KEYWORDS = {
     "predict": ["predict", "forecast", "future"],
+    # Matched by co-occurrence in `_detect_intent`, not by this (empty) list.
+    # It sits here so the routing order stays readable in one place: ahead of
+    # "export", because these requests almost always say "excel" and would
+    # otherwise be answered by the single-sheet exporter (plan §17.6).
+    "event_analysis": [],
     "export":  ["excel", "export"],
     # Cross-dataset comparison (plan §16). Checked before "insight" because
     # "why did spend affect signups" is a correlation question first and a
@@ -237,6 +285,10 @@ def _detect_intent(query: str, table_count: int = 1) -> str:
     q = query.lower()
     for intent, kws in _INTENT_KEYWORDS.items():
         if intent == "correlate" and table_count < 2:
+            continue
+        if intent == "event_analysis":
+            if _is_event_analysis(q):
+                return intent
             continue
         if any(k in q for k in kws):
             return intent
@@ -349,15 +401,25 @@ SQL:"""
     return _extract_sql(_llm(prompt))
 
 
-def _fix_sql(sql: str, session: Session, error: str) -> str:
+def _fix_sql(sql: str, session: Session, error: str, pipeline: bool = False) -> str:
     schema = rich_schema_summary(session.tables, session.con, _ensure_profile(session))
+    # The 200-row cap in the generation prompt is about a preview a person
+    # reads on screen. An event-analysis query feeds a workbook, which is not
+    # capped (plan §17.4), so the exception is stated to the model rather than
+    # the LIMIT being stripped off the answer afterwards.
+    scope = """
+This query feeds a multi-sheet workbook rather than an on-screen preview: do
+NOT add a LIMIT, and keep any LIMIT already present exactly as it is. Preserve
+the query's aggregation and its output columns — repair only what the error
+names.
+""" if pipeline else ""
     prompt = f"""Fix this DuckDB SQL query.
 
 ERROR: {error}
 
 SCHEMA:
 {schema}
-
+{scope}
 BROKEN SQL:
 {sql}
 
@@ -450,6 +512,210 @@ def _insights(df: pd.DataFrame, query: str) -> tuple[str, dict | None]:
         f"Answer:\n1. WHAT HAPPENED\n2. WHY IT HAPPENED\n3. WHAT TO DO NEXT"
     )
     return _llm(prompt), found
+
+# ── Event analysis pipeline (plan §17) ────────────────────────────────────────
+#
+# The first intent that is not one-question-one-query: one request produces a
+# set of related aggregations, a narrative over them, and one workbook. It is
+# written as a generator like `_query_pipeline` itself, and emits its stages as
+# INVESTIGATION_STEP events on the existing stream — §17.3 is explicit that
+# there is no second streaming channel.
+
+
+def _run_sub_analysis(session: Session, sub: dict) -> dict:
+    """One sub-analysis through the same validate → fix-retry → execute path as
+    any other query.
+
+    A failure is *recorded and returned*, never raised: §17.3 requires a failed
+    sub-analysis to cost its own sheet and nothing else, so the caller keeps
+    going and the reason reaches Method.
+    """
+    result = {**sub, "frame": None, "row_count": None, "validation": None}
+    sql = sub["sql"]
+
+    valid, msg = _validate_sql(sql, session)
+    attempts = 0
+    while not valid and attempts < 2:
+        attempts += 1
+        try:
+            sql = _fix_sql(sql, session, msg, pipeline=True)
+        except Exception as e:
+            msg = f"{msg}; repair failed: {e}"
+            break
+        valid, msg = _validate_sql(sql, session)
+
+    if not valid:
+        return {**result, "sql": sql, "skipped": f"the query did not validate: {msg}",
+                "validation": f"invalid after {attempts} repair attempt(s)"}
+
+    # The same per-SQL session cache every other query uses (plan §17.4) — a
+    # re-asked event analysis re-serves its aggregates rather than recomputing
+    # them, and no second cache layer is introduced.
+    frame = _get_cached(session, sql)
+    cached = frame is not None
+    if frame is None:
+        try:
+            frame = session.con.execute(sql).fetchdf()
+            _put_cached(session, sql, frame)
+        except Exception as e:
+            return {**result, "sql": sql,
+                    "skipped": f"the query validated but failed to run: {e}",
+                    "validation": "execution failed"}
+
+    return {**result, "sql": sql, "frame": frame, "row_count": len(frame),
+            "validation": ("served from cache" if cached else
+                           ("repaired after %d attempt(s)" % attempts if attempts
+                            else "validated on first attempt"))}
+
+
+def _event_analysis_pipeline(session: Session, query: str, raw_query: str,
+                             role_overrides: dict | None, session_id: str | None):
+    """Yield (event, payload) for the five stages of §17.3; the final yield is
+    ("RESULT", response_fragment)."""
+    profile = _ensure_profile(session)
+
+    # ── Resolve ──
+    yield "INVESTIGATION_STEP", {"label": "Resolving which column plays which role"}
+    resolved = resolve_roles(profile, session.con, role_overrides)
+    roles, table = resolved["roles"], resolved["table"]
+
+    if resolved["blocked"]:
+        yield "RESULT", {
+            "event_analysis": {
+                "table": table, "roles": roles, "windows": None, "plan": [],
+                "blocked": resolved["blocked"], "narrative": None,
+                "findings": [], "sql_statements": [],
+            },
+            "text": resolved["blocked"],
+        }
+        return
+
+    windows = resolve_windows(query, table, roles["time"]["column"], session.con)
+    if windows.get("blocked"):
+        yield "RESULT", {
+            "event_analysis": {
+                "table": table, "roles": roles, "windows": None, "plan": [],
+                "blocked": windows["blocked"], "narrative": None,
+                "findings": [], "sql_statements": [],
+            },
+            "text": windows["blocked"],
+        }
+        return
+
+    role_summary = ", ".join(
+        f"{name}={entry['column']}" for name, entry in roles.items() if entry["column"]
+    )
+    yield "INVESTIGATION_STEP", {
+        "label": f"Resolved {role_summary}; event window "
+                 f"{windows['event']['start']} to {windows['event']['end']}",
+        "roles": roles, "windows": windows, "table": table,
+    }
+
+    # ── Plan ── emitted in full before anything runs, so the UI can show it and
+    # the user can cancel (§17.3).
+    subs = plan_sub_analyses(table, roles, windows)
+    plan = [{"key": s["key"], "title": s["title"], "description": s["description"],
+             "skipped": s["skipped"]} for s in subs]
+    will_run = [p for p in plan if not p["skipped"]]
+    yield "INVESTIGATION_STEP", {
+        "label": f"Planned {len(will_run)} sub-analyses"
+                 + (f", skipping {len(plan) - len(will_run)}" if len(will_run) < len(plan) else ""),
+        "plan": plan,
+    }
+
+    # ── Execute ──
+    results = []
+    for i, sub in enumerate(subs, start=1):
+        if sub["skipped"]:
+            results.append({**sub, "frame": None, "row_count": None, "validation": None})
+            yield "INVESTIGATION_STEP", {
+                "label": f"Skipping {sub['title']} — {sub['skipped']}",
+                "step_key": sub["key"], "step_status": "skipped",
+            }
+            continue
+        yield "INVESTIGATION_STEP", {
+            "label": f"Running {sub['title']} ({i} of {len(subs)})",
+            "step_key": sub["key"], "step_status": "running",
+        }
+        result = _run_sub_analysis(session, sub)
+        results.append(result)
+        if result["skipped"]:
+            yield "INVESTIGATION_STEP", {
+                "label": f"{sub['title']} failed and was skipped — {result['skipped']}",
+                "step_key": sub["key"], "step_status": "failed",
+            }
+
+    # ── Interpret ──
+    yield "INVESTIGATION_STEP", {"label": "Reading the findings out of each sub-analysis"}
+    findings = []
+    for result in results:
+        if result["skipped"] or result["frame"] is None:
+            continue
+        try:
+            lines = findings_for(result, result["frame"])
+        except Exception as e:
+            lines = [f"{result['title']}: findings could not be derived ({e})."]
+        findings.append({"key": result["key"], "title": result["title"],
+                         "description": result["description"], "findings": lines})
+
+    narrative = None
+    if findings:
+        yield "INVESTIGATION_STEP", {"label": "Writing the narrative over the whole set"}
+        try:
+            narrative = _llm(narrative_prompt(roles, windows, findings)).strip()
+        except Exception:
+            # The narrative is the model's contribution; the measured findings
+            # are ours. Losing it costs the prose, not the workbook.
+            narrative = None
+
+    # ── Assemble ──
+    yield "INVESTIGATION_STEP", {"label": "Assembling the workbook"}
+    notes = []
+    if narrative is None:
+        notes.append("No narrative was produced for this run; the Narrative sheet holds "
+                     "the measured findings only.")
+    if not roles["event_key"]["column"]:
+        notes.append("No per-interaction key was resolved, so every count of events is a "
+                     "row count.")
+    try:
+        session.workbook = build_event_workbook(table, roles, windows, results,
+                                                findings, narrative, notes)
+        workbook_error = None
+    except Exception as e:
+        session.workbook = None
+        workbook_error = f"The workbook could not be assembled: {e}"
+
+    ran = [r for r in results if not r["skipped"] and r["frame"] is not None]
+    session.roles = roles
+
+    yield "RESULT", {
+        "event_analysis": {
+            "table": table,
+            "roles": roles,
+            "windows": windows,
+            "plan": plan,
+            "narrative": narrative,
+            "findings": findings,
+            "notes": notes,
+            # Every query behind the workbook, so the technical drawer can show
+            # more than one statement (plan §17.6).
+            "sql_statements": [
+                {"title": r["title"], "sql": r["sql"], "rows": r["row_count"],
+                 "validation": r["validation"], "skipped": r["skipped"]}
+                for r in results if r["sql"]
+            ],
+            "sheets": [r["title"] for r in ran],
+            "skipped": [{"title": r["title"], "reason": r["skipped"]}
+                        for r in results if r["skipped"]],
+            "blocked": workbook_error,
+        },
+        "workbook_ready": session.workbook is not None,
+        # The first sub-analysis that ran doubles as the on-screen preview, so
+        # the answer isn't a download and nothing else.
+        "_frame": ran[0]["frame"] if ran else None,
+        "_sql": ran[0]["sql"] if ran else None,
+    }
+
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
@@ -569,6 +835,11 @@ def get_context(sid: str):
 
 class QueryRequest(BaseModel):
     query: str
+    # Role corrections for an event-analysis turn (plan §17.2): {"entity":
+    # "col", "cross_dim": "col", "measure": ["a", "b"], ...}. A role named here
+    # comes back marked "confirmed" and is never re-inferred, which is what
+    # makes the mapping the UI renders editable rather than merely visible.
+    roles: dict | None = None
 
 
 # ── One conversational turn, as a sequence of real steps ──────────────────────
@@ -588,12 +859,21 @@ class QueryRequest(BaseModel):
 # plus ERROR, which the stream needs because a failure after the response has
 # started can no longer be reported as an HTTP status.
 
-def _query_pipeline(session: Session, raw_query: str, session_id: str | None = None):
+def _query_pipeline(session: Session, raw_query: str, session_id: str | None = None,
+                    role_overrides: dict | None = None):
     """Yield (event, payload) as each step of one turn completes; the last
     event is always RESPONSE_READY carrying the same dict `/query` returns."""
     started = time.perf_counter()
     query = _normalize_dates(_normalize(raw_query, session))
     intent = _detect_intent(query, table_count=len(session.tables))
+
+    # Any turn that is not an event analysis retires the stored workbook, so
+    # `/export` can never hand back a file describing an earlier question
+    # (plan §17.6). An "export to excel" follow-up is the exception: it is
+    # asking for the analysis that just ran, and regenerating SQL for it would
+    # hand back one sub-analysis of five and call it the analysis.
+    if intent not in ("event_analysis", "export"):
+        session.workbook = None
 
     # Profiling is normally already done at upload time; it only runs here when
     # a code path below is the first to need it, and only then is it announced.
@@ -603,6 +883,62 @@ def _query_pipeline(session: Session, raw_query: str, session_id: str | None = N
         # `profile` is keyed by table name (the shape /profile returns under
         # "tables"), so the names are its keys.
         yield "PROFILE_COMPLETED", {"tables": list(session.profile)}
+
+    if intent == "event_analysis":
+        fragment = None
+        for event, payload in _event_analysis_pipeline(
+                session, query, raw_query, role_overrides, session_id):
+            if event == "RESULT":
+                fragment = payload
+            else:
+                yield event, payload
+
+        frame = fragment.pop("_frame", None)
+        sql = fragment.pop("_sql", None)
+        block = fragment["event_analysis"]
+
+        if sql:
+            # Reported like any other query so the drawer, the row count and the
+            # timing mean the same thing they do on every other turn.
+            yield "SQL_GENERATED", {"sql": sql, "intent": intent}
+            yield "SQL_VALIDATED", {"sql": sql, "validation": {
+                "status": "planned", "fix_attempts": 0, "error": None}}
+            yield "QUERY_EXECUTED", {
+                "total_rows": len(frame), "cached": False,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+            }
+
+        try:
+            context = derive_context(sql or "", session.con, session.profile,
+                                     raw_query, dataset_id=session_id) if sql \
+                else empty_context(session_id, raw_query)
+            if sql:
+                context["last_finding_summary"] = summarize_result(frame, context)
+        except Exception:
+            context = empty_context(session_id, raw_query)
+        session.context = context
+
+        session.history.append({
+            "query": query, "sql": sql or "", "intent": intent,
+            "result_summary": frame.head(3).to_string(index=False) if frame is not None else "",
+            "context": context,
+        })
+
+        response = {
+            "intent": intent,
+            "sql": sql or "",
+            "rows": frame.head(200).to_dict(orient="records") if frame is not None else [],
+            "columns": list(frame.columns) if frame is not None else [],
+            "total_rows": len(frame) if frame is not None else 0,
+            "tables_used": [block["table"]] if block.get("table") else [],
+            "validation": {"status": "planned", "fix_attempts": 0, "error": None},
+            "context": context,
+            "text": fragment.get("text"),
+            "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+            **{k: v for k, v in fragment.items() if k != "text"},
+        }
+        yield "RESPONSE_READY", {"response": response}
+        return
 
     # A correlation turn doesn't ask the model for SQL. The alignment — both
     # measures bucketed onto one calendar grain and joined on it — is built
@@ -746,6 +1082,16 @@ def _query_pipeline(session: Session, raw_query: str, session_id: str | None = N
     yield "RESPONSE_READY", {"response": response}
 
 
+def _workbook_response(payload: bytes) -> StreamingResponse:
+    """The assembled event-analysis workbook, served as-is. It is built once
+    per turn and held on the session, so downloading it re-runs nothing."""
+    return StreamingResponse(
+        io.BytesIO(payload),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=event_analysis.xlsx"},
+    )
+
+
 def _export_xlsx(session: Session, sql: str) -> StreamingResponse:
     df = _get_cached(session, sql)
     if df is None:
@@ -770,10 +1116,12 @@ def run_query(sid: str, body: QueryRequest):
     # endpoint's contract is unchanged, the intermediate steps are simply not
     # observable over a single blocking request (plan §10).
     response = None
-    for event, payload in _query_pipeline(session, body.query, sid):
+    for event, payload in _query_pipeline(session, body.query, sid, body.roles):
         if event == "RESPONSE_READY":
             response = payload["response"]
 
+    if response["intent"] in ("export", "event_analysis") and session.workbook is not None:
+        return _workbook_response(session.workbook)
     if response["intent"] == "export":
         return _export_xlsx(session, response["sql"])
 
@@ -798,7 +1146,7 @@ def run_query_stream(sid: str, body: QueryRequest):
 
     def stream():
         try:
-            for event, payload in _query_pipeline(session, body.query, sid):
+            for event, payload in _query_pipeline(session, body.query, sid, body.roles):
                 if event == "RESPONSE_READY":
                     response = payload["response"]
                     # An .xlsx body can't travel down an event stream, so the
@@ -835,4 +1183,12 @@ def export_last(sid: str):
     session = get_session(sid)
     if not session.history:
         raise HTTPException(status_code=400, detail="No query run yet.")
-    return _export_xlsx(session, session.history[-1]["sql"])
+    # An event analysis already produced its workbook (plan §17.6). Serving it
+    # is the only correct answer here: re-running the last turn's SQL would
+    # hand back one sheet of one sub-analysis and call it the analysis.
+    if session.workbook is not None:
+        return _workbook_response(session.workbook)
+    last = session.history[-1]["sql"]
+    if not last:
+        raise HTTPException(status_code=400, detail="The last turn produced no query to export.")
+    return _export_xlsx(session, last)

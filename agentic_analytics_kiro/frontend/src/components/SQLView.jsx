@@ -4,15 +4,24 @@
  *
  * Labeled with its dialect because the SQL is DuckDB's, and editable because
  * the generated query is a starting point the user is allowed to correct.
+ *
+ * `readOnly` is for the one case where it isn't: an event analysis's queries
+ * are built from the resolved roles rather than generated (plan §17), and one
+ * of five statements edited in place would not change the workbook the answer
+ * already contains. The label says which of the two is on screen instead of
+ * offering an edit that goes nowhere.
  */
-export default function SQLView({ value, onChange }) {
+export default function SQLView({ value, onChange, readOnly = false }) {
   return (
     <>
-      <div style={styles.label}>SQL · DuckDB dialect · editable</div>
+      <div style={styles.label}>
+        SQL · DuckDB dialect · {readOnly ? "built from the resolved roles" : "editable"}
+      </div>
       <textarea
-        style={styles.editor}
+        style={{ ...styles.editor, ...(readOnly ? styles.readOnly : null) }}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        readOnly={readOnly}
         spellCheck={false}
       />
     </>
@@ -43,4 +52,5 @@ const styles = {
     lineHeight: 1.7,
     overflowY: "auto",
   },
+  readOnly: { color: "var(--text-soft)" },
 };

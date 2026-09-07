@@ -24,9 +24,15 @@ export default function Workspace({ session, onUpdate }) {
   const latestSQL =
     [...session.messages].reverse().find((m) => m.role === "assistant" && m.sql)?.sql ?? null;
 
-  const openTechnical = useCallback((nextSQL, nextMeta, shouldOpen = true) => {
+  // An event analysis runs several queries behind one answer (plan §17.6), so
+  // the drawer is handed the whole list and shows the editor on whichever one
+  // is selected. Every other turn passes none and the drawer behaves as before.
+  const [statements, setStatements] = useState(null);
+
+  const openTechnical = useCallback((nextSQL, nextMeta, shouldOpen = true, nextStatements) => {
     setSQL(nextSQL ?? "");
     setMeta(nextMeta ?? null);
+    setStatements(nextStatements?.length ? nextStatements : null);
     if (shouldOpen) setOpen(true);
   }, []);
 
@@ -51,6 +57,7 @@ export default function Workspace({ session, onUpdate }) {
         onSQLChange={setSQL}
         onExport={() => exportLast(session.id)}
         latestSQL={latestSQL}
+        statements={statements}
       />
     </>
   );

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 import os
+import random
 import sys
 import datetime
 
@@ -109,9 +110,106 @@ def _daily_signups_frame() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _purchases_frame() -> pd.DataFrame:
+    """Retail-shaped event data for the §17 pipeline: a repeat actor
+    (`shopper_ref`), one row per interaction (`basket_ref`), a low-cardinality
+    dimension an actor can span (`outlet`), a date, and two additive measures.
+
+    Deterministic: seeded, so every assertion about a number below is stable.
+    Day 116 is four times the usual volume — the event.
+    """
+    rng = random.Random(11)
+    start = datetime.date(2024, 1, 1)
+    outlets = ["north", "south", "harbour", "airport"]
+    rows, ref = [], 500_000
+    for offset in range(120):
+        day = start + datetime.timedelta(days=offset)
+        for _ in range(160 if offset == 116 else 40):
+            rows.append({
+                "shopper_ref": f"S{rng.randint(1, 300):04d}",
+                "basket_ref": f"B{ref}",
+                "outlet": outlets[rng.randrange(len(outlets))],
+                "purchase_day": day,
+                "basket_total_aud": round(rng.uniform(8, 120), 2),
+                "line_items": rng.randint(1, 9),
+            })
+            ref += 1
+    return pd.DataFrame(rows)
+
+
+def _consultations_frame() -> pd.DataFrame:
+    """The same *shape* in a vocabulary that shares no word with the retail
+    frame above — the point of §17.7's two-dataset requirement. If a pipeline
+    assertion passes here and there, it cannot be reading a column name."""
+    rng = random.Random(23)
+    start = datetime.date(2023, 6, 1)
+    sites = ["riverside", "hilltop", "central"]
+    rows, ref = [], 900_000
+    for offset in range(150):
+        day = start + datetime.timedelta(days=offset)
+        for _ in range(120 if offset == 143 else 30):
+            rows.append({
+                "patient_code": f"P{rng.randint(1, 220):04d}",
+                "visit_ref": f"V{ref}",
+                "clinic_site": sites[rng.randrange(len(sites))],
+                "seen_on": day,
+                "billed_amount_chf": round(rng.uniform(40, 400), 2),
+                "minutes_spent": rng.randint(5, 60),
+            })
+            ref += 1
+    return pd.DataFrame(rows)
+
+
+def _redemptions_frame() -> pd.DataFrame:
+    """Event-shaped, but with nothing an actor could span: an entity, a key, a
+    date and a measure, and no low-cardinality dimension at all. The pipeline
+    must still run and must say what it left out (§17.7)."""
+    rng = random.Random(5)
+    start = datetime.date(2024, 2, 1)
+    rows, ref = [], 700_000
+    for offset in range(90):
+        day = start + datetime.timedelta(days=offset)
+        for _ in range(100 if offset == 86 else 25):
+            rows.append({
+                "member_tag": f"M{rng.randint(1, 180):04d}",
+                "voucher_ref": f"R{ref}",
+                "logged_on": day,
+                "points_awarded": rng.randint(1, 500),
+            })
+            ref += 1
+    return pd.DataFrame(rows)
+
+
 DATASETS = {
     "hr": _hr_frame,
     "marketing": _marketing_frame,
+}
+
+# Datasets shaped like a discrete event, for the pipeline in §17. Kept separate
+# from DATASETS so the MVP suite above still runs against its own two files.
+EVENT_DATASETS = {
+    "purchases": _purchases_frame,
+    "consultations": _consultations_frame,
+}
+
+# The roles each event dataset's columns should resolve to, and the day the
+# event actually happened. Asserted against so a test can't pass by resolving
+# the *other* dataset's shape.
+EVENT_EXPECTATIONS = {
+    "purchases": {
+        "entity": "shopper_ref", "event_key": "basket_ref", "cross_dim": "outlet",
+        "time": "purchase_day", "measure": ["basket_total_aud", "line_items"],
+        "event_day": "2024-04-26",
+        "foreign": ["patient_code", "visit_ref", "clinic_site", "seen_on",
+                    "billed_amount_chf", "minutes_spent"],
+    },
+    "consultations": {
+        "entity": "patient_code", "event_key": "visit_ref", "cross_dim": "clinic_site",
+        "time": "seen_on", "measure": ["billed_amount_chf", "minutes_spent"],
+        "event_day": "2023-10-22",
+        "foreign": ["shopper_ref", "basket_ref", "outlet", "purchase_day",
+                    "basket_total_aud", "line_items"],
+    },
 }
 
 # Datasets that *do* relate to each other, for the cross-dataset work in §16.
@@ -146,6 +244,25 @@ def csv_files(tmp_path):
         build().to_csv(path, index=False)
         paths[name] = str(path)
     return paths
+
+
+@pytest.fixture
+def event_csv_files(tmp_path):
+    """The event-shaped datasets, written to disk as {name: path}."""
+    paths = {}
+    for name, build in EVENT_DATASETS.items():
+        path = tmp_path / f"{name}.csv"
+        build().to_csv(path, index=False)
+        paths[name] = str(path)
+    return paths
+
+
+@pytest.fixture
+def no_cross_dim_csv(tmp_path):
+    """One event-shaped dataset with no dimension an entity could span."""
+    path = tmp_path / "redemptions.csv"
+    _redemptions_frame().to_csv(path, index=False)
+    return str(path)
 
 
 @pytest.fixture

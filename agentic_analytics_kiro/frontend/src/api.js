@@ -30,11 +30,13 @@ export async function uploadFiles(sid, files) {
  * EventSource can't be used here: it only issues GET requests, and the question
  * travels in the body. fetch + a stream reader is the equivalent for POST.
  */
-export async function runQueryStream(sid, query, onEvent) {
+export async function runQueryStream(sid, query, onEvent, roles = null) {
   const r = await fetch(`${BASE}/session/${sid}/query/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query }),
+    // `roles` pins one or more of an event analysis's resolved roles (plan
+    // §17.2). Omitted on every other turn, so the backend infers as before.
+    body: JSON.stringify(roles ? { query, roles } : { query }),
   });
   if (!r.ok) throw new Error(await r.text());
   if (!r.body) throw new Error("Streaming is not supported by this browser.");
@@ -102,14 +104,22 @@ export async function getRelationships(sid) {
   return relationships;
 }
 
+/**
+ * Downloads the session's most recent export. For an ordinary turn that is the
+ * single sheet of rows the answer showed; after an event analysis it is the
+ * multi-sheet workbook the backend already assembled (plan §17.6), which is why
+ * the filename comes from the response rather than being assumed here.
+ */
 export async function exportLast(sid) {
   const r = await fetch(`${BASE}/session/${sid}/export`);
   if (!r.ok) throw new Error(await r.text());
+  const disposition = r.headers.get("content-disposition") || "";
+  const named = /filename=\"?([^\";]+)/.exec(disposition);
   const blob = await r.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "export.xlsx";
+  a.download = named ? named[1] : "export.xlsx";
   a.click();
   URL.revokeObjectURL(url);
 }

@@ -17,6 +17,9 @@ export default function MessageList({
   onRetry,
   canRetry,
   onPickSuggestion,
+  onConfirmRole,
+  onDownloadWorkbook,
+  busy,
 }) {
   const bottomRef = useRef();
 
@@ -37,6 +40,9 @@ export default function MessageList({
           onOpenTechnical={onOpenTechnical}
           onRetry={onRetry}
           canRetry={canRetry}
+          onConfirmRole={onConfirmRole}
+          onDownloadWorkbook={onDownloadWorkbook}
+          busy={busy}
         />
       ))}
 

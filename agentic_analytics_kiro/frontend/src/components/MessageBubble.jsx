@@ -5,10 +5,14 @@ import ActivityTrace from "./ActivityTrace.jsx";
 import ForecastBlock from "./ForecastBlock.jsx";
 import CorrelationBlock from "./CorrelationBlock.jsx";
 import AnomalyBlock from "./AnomalyBlock.jsx";
+import EventAnalysisBlock from "./EventAnalysisBlock.jsx";
 import TechnicalDetailsToggle from "./TechnicalDetailsToggle.jsx";
 import { Database, User, Inbox, AlertTriangle, RotateCw } from "lucide-react";
 
-export default function MessageBubble({ msg, onOpenTechnical, onRetry, canRetry = true }) {
+export default function MessageBubble({
+  msg, onOpenTechnical, onRetry, canRetry = true,
+  onConfirmRole, onDownloadWorkbook, busy,
+}) {
   const isUser = msg.role === "user";
 
   // Findings are derived from the result's shape only — never from column names.
@@ -92,6 +96,21 @@ export default function MessageBubble({ msg, onOpenTechnical, onRetry, canRetry 
                 </span>
               </div>
             )}
+
+            {/* Event analysis (plan §17): what each column was taken to mean,
+                the plan and how far it got, what was left out and why, and the
+                workbook. Rendered while the turn is still running — the plan
+                arrives before any of it executes — so the list fills in rather
+                than appearing all at once. */}
+            <EventAnalysisBlock
+              analysis={msg.event_analysis}
+              progress={msg.event_progress}
+              onConfirmRole={
+                onConfirmRole ? (role, column) => onConfirmRole(msg, role, column) : null
+              }
+              onDownload={msg.workbook_ready ? onDownloadWorkbook : null}
+              disabled={busy}
+            />
 
             {/* Cross-dataset comparison (plan §16): stated above the aligned
                 rows it was computed from, and rendered even when it couldn't

@@ -15,21 +15,39 @@ import ExecutionMeta from "./ExecutionMeta.jsx";
  * produced); this file owns the drawer chrome — rail, header, copy/reset,
  * export — and the SQL draft the user may edit.
  */
-export default function CodePanel({ sql, meta, open, onToggle, onSQLChange, onExport, latestSQL = null }) {
+export default function CodePanel({
+  sql, meta, open, onToggle, onSQLChange, onExport, latestSQL = null,
+  // Every query behind one answer, for an event analysis's workbook (plan
+  // §17.6). Null on an ordinary turn, where there is only ever one statement
+  // and the selector below doesn't render.
+  statements = null,
+}) {
   const [copied, setCopied] = useState(false);
   const [localSQL, setLocalSQL] = useState(sql);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState(null);
+  const [selected, setSelected] = useState(0);
 
   // Sync when parent pushes a new SQL (from clicking a message)
   useEffect(() => {
     setLocalSQL(sql);
     setExportError(null);
-  }, [sql]);
+    setSelected(0);
+  }, [sql, statements]);
+
+  // Which of the answer's queries is on screen. A sub-analysis that was skipped
+  // has no SQL of its own to show, so it is listed with its reason rather than
+  // being dropped — an absent query is part of what the answer did (§17.7).
+  const shown = statements?.[selected] ?? null;
+  const showSQL = shown ? shown.sql : localSQL;
+  const pickStatement = (i) => {
+    setSelected(i);
+    setLocalSQL(statements[i].sql);
+  };
 
   const copy = () => {
-    if (!localSQL) return;
-    navigator.clipboard.writeText(localSQL);
+    if (!showSQL) return;
+    navigator.clipboard.writeText(showSQL);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
@@ -55,7 +73,7 @@ export default function CodePanel({ sql, meta, open, onToggle, onSQLChange, onEx
     }
   };
 
-  const isEmpty = !localSQL?.trim();
+  const isEmpty = !showSQL?.trim();
   // /export returns the session's most recent result. Offering the button
   // while an earlier answer's SQL is on screen would hand back a file that
   // doesn't match what the drawer is showing, so it is only enabled when the
@@ -63,7 +81,7 @@ export default function CodePanel({ sql, meta, open, onToggle, onSQLChange, onEx
   const exportsThisAnswer = Boolean(latestSQL) && sql === latestSQL;
   // Edits to the SQL aren't run anywhere — the file still contains the result
   // that actually ran.
-  const edited = localSQL !== sql;
+  const edited = !statements && localSQL !== sql;
 
   // ── Collapsed rail ──
   if (!open) {
@@ -87,7 +105,7 @@ export default function CodePanel({ sql, meta, open, onToggle, onSQLChange, onEx
         <SlidersHorizontal size={14} color="var(--text-muted)" />
         <span style={styles.title}>Technical details</span>
         <div style={styles.actions}>
-          {localSQL !== sql && (
+          {!statements && localSQL !== sql && (
             <button style={styles.actionBtn} onClick={reset} title="Reset">
               <RotateCcw size={12} />
             </button>
@@ -111,9 +129,44 @@ export default function CodePanel({ sql, meta, open, onToggle, onSQLChange, onEx
         </div>
       ) : (
         <>
+          {statements && (
+            <div style={styles.statements}>
+              <div style={styles.statementsLabel}>
+                {statements.length} quer{statements.length === 1 ? "y" : "ies"} behind this answer
+              </div>
+              <div style={styles.statementTabs}>
+                {statements.map((s, i) => (
+                  <button
+                    key={s.title}
+                    style={{
+                      ...styles.statementTab,
+                      ...(i === selected ? styles.statementTabActive : null),
+                      ...(s.skipped ? styles.statementTabSkipped : null),
+                    }}
+                    onClick={() => pickStatement(i)}
+                    title={s.skipped ? `Not included — ${s.skipped}` : `${s.rows} row(s)`}
+                  >
+                    {s.title}
+                  </button>
+                ))}
+              </div>
+              {shown && (
+                <p style={styles.statementNote}>
+                  {shown.skipped
+                    ? `Not included — ${shown.skipped}`
+                    : `${shown.rows} row${shown.rows === 1 ? "" : "s"} · ${shown.validation}`}
+                </p>
+              )}
+            </div>
+          )}
           <SQLView
-            value={localSQL}
-            onChange={(next) => { setLocalSQL(next); onSQLChange(next); }}
+            value={showSQL}
+            readOnly={Boolean(statements)}
+            onChange={(next) => {
+              if (statements) return;
+              setLocalSQL(next);
+              onSQLChange(next);
+            }}
           />
           <ExecutionMeta meta={meta} />
           {onExport && (
@@ -127,12 +180,18 @@ export default function CodePanel({ sql, meta, open, onToggle, onSQLChange, onEx
                 disabled={!exportsThisAnswer || exporting}
                 title={
                   exportsThisAnswer
-                    ? "Download this answer's rows as .xlsx"
+                    ? (statements
+                      ? "Download the multi-sheet workbook this analysis produced"
+                      : "Download this answer's rows as .xlsx")
                     : "Export returns the most recent answer's rows — open technical details on that answer to export it"
                 }
               >
                 <Download size={12} />
-                {exporting ? "Exporting…" : "Export this result (.xlsx)"}
+                {exporting
+                  ? "Exporting…"
+                  : statements
+                    ? "Download the workbook (.xlsx)"
+                    : "Export this result (.xlsx)"}
               </button>
               {!exportsThisAnswer && (
                 <p style={styles.exportNote}>
@@ -244,6 +303,37 @@ const styles = {
     textAlign: "center",
     lineHeight: 1.5,
   },
+  statements: {
+    borderBottom: "1px solid var(--border)",
+    padding: "8px 14px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    flexShrink: 0,
+  },
+  statementsLabel: {
+    fontSize: 11,
+    fontWeight: 600,
+    color: "var(--text-muted)",
+    letterSpacing: "0.03em",
+  },
+  statementTabs: { display: "flex", flexWrap: "wrap", gap: 4 },
+  statementTab: {
+    background: "var(--surface2)",
+    border: "1px solid var(--border)",
+    borderRadius: "var(--radius-pill)",
+    color: "var(--text-muted)",
+    fontSize: 11,
+    padding: "2px 9px",
+    cursor: "pointer",
+  },
+  statementTabActive: {
+    color: "var(--accent)",
+    background: "var(--accent-soft)",
+    borderColor: "var(--accent-border)",
+  },
+  statementTabSkipped: { textDecoration: "line-through", opacity: 0.6 },
+  statementNote: { margin: 0, fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5 },
   exportRow: {
     borderTop: "1px solid var(--border)",
     padding: "8px 14px",

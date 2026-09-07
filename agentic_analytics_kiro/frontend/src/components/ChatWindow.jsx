@@ -29,7 +29,9 @@ function stepFor(event, payload) {
       return `Preparing the answer (${payload.total_rows} row${payload.total_rows === 1 ? "" : "s"})`;
     case "INVESTIGATION_STEP":
       // Dataset-dependent work: the label is whatever the backend sent, so new
-      // kinds of investigation need no change here (plan §1, §10).
+      // kinds of investigation need no change here (plan §1, §10). An event
+      // analysis rides the same event, carrying its plan and per-step status
+      // alongside the label rather than on a channel of its own (plan §17.3).
       return payload.label ?? null;
     default:
       return null;
@@ -62,7 +64,10 @@ export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
         serverMs: msg.duration_ms ?? null,
         durationMs: msg.durationMs,
       },
-      open
+      open,
+      // Every query behind an event analysis's workbook, so the drawer can show
+      // more than one statement (plan §17.6). Undefined on every other turn.
+      msg.sql_statements ?? undefined
     );
   };
 
@@ -79,27 +84,52 @@ export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
   // One conversational turn, addressed by message id. A retry reruns this with
   // the same id, so the failed answer is replaced in place rather than the
   // question being asked twice (plan §13.8).
-  const runTurn = async (question, msgId) => {
+  //
+  // `roles` pins one or more of an event analysis's resolved roles (plan
+  // §17.2); every other turn passes none and the backend infers as before.
+  const runTurn = async (question, msgId, roles = null) => {
     setLoading(true);
     // The first step is open from the moment the request leaves: the backend is
     // generating SQL before it can report anything about it.
     const steps = [{ label: "Generating SQL" }];
     // `retryQuery` rides along from the start so the message can be retried
     // even if the failure arrives without it in scope.
+    //
+    // What an event analysis has planned and how far it has got, built up from
+    // the same INVESTIGATION_STEP events (plan §17.3). Both stay null on every
+    // other turn, so nothing renders a plan where there isn't one.
+    let planned = null;
+    const progress = {};
     const showProgress = () =>
       putMessage(msgId, {
-        id: msgId, role: "assistant", loading: true, retryQuery: question, steps: [...steps],
+        id: msgId, role: "assistant", loading: true, retryQuery: question,
+        steps: [...steps], retryRoles: roles,
+        event_analysis: planned ? { ...planned } : null,
+        event_progress: { ...progress },
       });
     showProgress();
 
     const startedAt = performance.now();
     try {
       const data = await runQueryStream(session.id, question, (event, payload) => {
+        // The plan arrives before any of it runs, so the list can be shown
+        // while it is still being worked through (plan §17.3).
+        if (payload.plan) planned = { ...(planned ?? {}), plan: payload.plan };
+        if (payload.roles) planned = { ...(planned ?? {}), ...payload };
+        if (payload.step_key) {
+          // A step that reports "running" has, by the time the next event
+          // arrives, finished — the backend only speaks when work completes.
+          for (const key of Object.keys(progress)) {
+            if (progress[key] === "running") progress[key] = "done";
+          }
+          progress[payload.step_key] =
+            payload.step_status === "running" ? "running" : payload.step_status;
+        }
         const label = stepFor(event, payload);
         if (!label) return;
         steps.push({ label });
         showProgress();
-      });
+      }, roles);
       const aiMsg = {
         id: msgId,
         role: "assistant",
@@ -119,6 +149,19 @@ export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
         anomalies: data.anomalies ?? null,
         // Cross-dataset correlation, present only on a correlate turn.
         correlation: data.correlation ?? null,
+        // The resolved roles, windows, plan and skipped sub-analyses of an
+        // event analysis (plan §17). Null on every other turn.
+        event_analysis: data.event_analysis ?? null,
+        // Every step of the plan is finished by the time the answer lands.
+        event_progress: Object.fromEntries(
+          (data.event_analysis?.plan ?? []).map((p) => [p.key, progress[p.key] ?? "done"])
+        ),
+        // The workbook is fetched from /export rather than coming down the
+        // stream, so the button needs to know there is one to fetch.
+        workbook_ready: data.workbook_ready ?? false,
+        // Every query behind the workbook, for the technical drawer (§17.6).
+        sql_statements: data.event_analysis?.sql_statements ?? null,
+        retryRoles: roles,
         intent: data.intent ?? null,
         tables_used: data.tables_used ?? [],
         validation: data.validation ?? null,
@@ -169,13 +212,22 @@ export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
   // suggestion, or the context strip dropping a filter (plan §11). Adjusting
   // the state that way therefore shows up in the conversation as the question
   // it really is, rather than changing the answer with no record of why.
-  const ask = (question) => {
+  const ask = (question, roles = null) => {
     const q = question.trim();
     if (!q || loading) return;
 
     const userId = Date.now();
     onUpdate((s) => ({ messages: [...s.messages, { id: userId, role: "user", content: q }] }));
-    runTurn(q, userId + 1);
+    runTurn(q, userId + 1, roles);
+  };
+
+  // Correcting a resolved role re-asks the same question with that role pinned
+  // (plan §17.2). Asking again rather than patching the answer in place keeps
+  // the correction in the conversation as the turn it really is — the same
+  // rule the context strip follows for dropping a filter (§11).
+  const confirmRole = (message, role, column) => {
+    if (!message.retryQuery || loading) return;
+    ask(message.retryQuery, { ...(message.retryRoles ?? {}), [role]: column });
   };
 
   const send = () => {
@@ -206,9 +258,12 @@ export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
         profile={session.profile}
         hasData={hasData}
         onOpenTechnical={openTechnical}
-        onRetry={(m) => runTurn(m.retryQuery, m.id)}
+        onRetry={(m) => runTurn(m.retryQuery, m.id, m.retryRoles)}
         canRetry={!loading}
         onPickSuggestion={ask}
+        onConfirmRole={confirmRole}
+        onDownloadWorkbook={() => exportLast(session.id)}
+        busy={loading}
       />
 
       {/* ── Input ── */}
