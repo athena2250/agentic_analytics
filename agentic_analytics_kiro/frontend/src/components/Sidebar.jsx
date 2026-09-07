@@ -4,6 +4,7 @@ import {
   Plus, MessageSquare, Pencil, Check, Trash2, Database
 } from "lucide-react";
 import DatasetSummaryCard from "./DatasetSummaryCard.jsx";
+import SchemaExplorer from "./SchemaExplorer.jsx";
 import UploadProgress from "./UploadProgress.jsx";
 
 function formatSize(bytes) {
@@ -22,7 +23,12 @@ function datasetLabel(session) {
   return `${tables} table${tables === 1 ? "" : "s"} · ${files} file${files === 1 ? "" : "s"}`;
 }
 
-export default function LeftPanel({
+/**
+ * Sidebar (plan §7, evolved from LeftPanel): dataset files, the active
+ * dataset's summary, a collapsible schema explorer, and the sessions list.
+ * Renders whatever the profile reports — it knows no column names in advance.
+ */
+export default function Sidebar({
   sessions, activeId, activeSession,
   onSelect, onNew, onRename, onUpload, uploading,
   uploadStage, uploadError, formats
@@ -138,10 +144,15 @@ export default function LeftPanel({
       </div>
 
       {/* ══ DATASET SUMMARY ══ */}
-      {activeSession?.profile && <DatasetSummaryCard profile={activeSession.profile} />}
+      {activeSession?.profile && (
+        <DatasetSummaryCard profile={activeSession.profile} name={activeSession.name} />
+      )}
 
-      {/* ══ TABLES SECTION ══ */}
-      {activeSession && Object.keys(activeSession.tables).length > 0 && (
+      {/* ══ SCHEMA EXPLORER ══ */}
+      <SchemaExplorer profile={activeSession?.profile} />
+
+      {/* ══ TABLES SECTION — fallback when profiling is unavailable ══ */}
+      {activeSession && !activeSession.profile && Object.keys(activeSession.tables).length > 0 && (
         <div style={styles.section}>
           <button style={styles.sectionHeader} onClick={() => {}}>
             <ChevronDown size={13} />

@@ -24,7 +24,21 @@ function dateSpanLabel(profile) {
   return `${months} month${months > 1 ? "s" : ""} of data`;
 }
 
-export default function DatasetSummaryCard({ profile }) {
+// Quality badge (plan §7): a summary of the profile's own null statistics —
+// not a score invented client-side. Columns the backend couldn't measure
+// (null_pct === null) are excluded rather than counted as complete.
+function qualityBadge(cols) {
+  const measured = cols.filter((c) => typeof c.null_pct === "number");
+  if (!measured.length) return null;
+  const worst = Math.max(...measured.map((c) => c.null_pct));
+  const withGaps = measured.filter((c) => c.null_pct > 0).length;
+  if (worst === 0) return { label: "No missing values", tone: "good" };
+  if (worst < 5) return { label: `${withGaps} field${withGaps > 1 ? "s" : ""} with few gaps`, tone: "good" };
+  if (worst < 30) return { label: `Up to ${Math.round(worst)}% missing`, tone: "warn" };
+  return { label: `Up to ${Math.round(worst)}% missing`, tone: "bad" };
+}
+
+export default function DatasetSummaryCard({ profile, name }) {
   if (!profile) return null;
 
   const tables = Object.values(profile.tables ?? {});
@@ -40,10 +54,18 @@ export default function DatasetSummaryCard({ profile }) {
   const uncertain = allCols.filter((c) => c.confidence < 0.6).length;
 
   const span = dateSpanLabel(profile);
+  const quality = qualityBadge(allCols);
 
   return (
     <div style={styles.card}>
-      <div style={styles.title}>Dataset ready</div>
+      <div style={styles.header}>
+        <div style={styles.title}>{name || "Dataset ready"}</div>
+        {quality && (
+          <span style={{ ...styles.badge, ...styles[quality.tone] }} title="Based on null counts reported by profiling">
+            {quality.label}
+          </span>
+        )}
+      </div>
       <div style={styles.stats}>
         {formatNum(rowCount)} rows · {formatNum(colCount)} columns
         {span ? ` · ${span}` : ""}
@@ -96,7 +118,32 @@ const styles = {
     borderRadius: 10,
     boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
   },
-  title: { fontSize: 12, fontWeight: 600, color: "var(--text)", marginBottom: 2 },
+  header: {
+    display: "flex",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    gap: 6,
+    marginBottom: 2,
+  },
+  title: {
+    fontSize: 12,
+    fontWeight: 600,
+    color: "var(--text)",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  badge: {
+    fontSize: 9.5,
+    fontWeight: 600,
+    borderRadius: 999,
+    padding: "1px 6px",
+    whiteSpace: "nowrap",
+    flexShrink: 0,
+  },
+  good: { color: "var(--accent)", background: "rgba(124,106,247,0.10)" },
+  warn: { color: "var(--text-soft)", background: "var(--surface2)" },
+  bad: { color: "var(--text-soft)", background: "var(--surface2)", border: "1px solid var(--border2)" },
   stats: { fontSize: 11, color: "var(--text-soft)", marginBottom: 8 },
   detected: { display: "flex", flexDirection: "column", gap: 3 },
   detectedLabel: {

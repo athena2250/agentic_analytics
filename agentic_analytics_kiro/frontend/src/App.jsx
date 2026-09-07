@@ -1,10 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
-import LeftPanel from "./components/LeftPanel.jsx";
-import ChatWindow from "./components/ChatWindow.jsx";
-import CodePanel from "./components/CodePanel.jsx";
+import Sidebar from "./components/Sidebar.jsx";
+import Workspace from "./components/Workspace.jsx";
 import EmptyState from "./components/EmptyState.jsx";
 import UploadIntentDialog from "./components/UploadIntentDialog.jsx";
-import { createSession, uploadFiles, getProfile, exportLast, getFormats } from "./api.js";
+import { createSession, uploadFiles, getProfile, getFormats } from "./api.js";
 
 // A session holding a dataset takes that dataset's name, so the sessions list
 // reads as a list of datasets (plan §13.11). User renames always win.
@@ -17,11 +16,6 @@ function datasetName(files) {
 export default function App() {
   const [sessions, setSessions] = useState([]);
   const [activeId, setActiveId] = useState(null);
-  // Technical Details drawer: the SQL + execution meta of the message last
-  // inspected. Collapsed by default — opened per-message (plan §7).
-  const [activeSQL, setActiveSQL] = useState("");
-  const [activeMeta, setActiveMeta] = useState(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
   // Which real backend round trip is currently in flight: "uploading" (POST
   // /upload) → "profiling" (GET /profile) → "ready", or null when idle. Drives
   // UploadProgress; every stage maps to an actual await (plan §6, §10).
@@ -33,18 +27,6 @@ export default function App() {
   // Files dropped into a session that already holds a dataset — held here
   // until the user says whether they extend it or belong to a new one.
   const [pendingUpload, setPendingUpload] = useState(null);
-
-  const resetTechnical = useCallback(() => {
-    setActiveSQL("");
-    setActiveMeta(null);
-    setDrawerOpen(false);
-  }, []);
-
-  const openTechnical = useCallback((sql, meta, open = true) => {
-    setActiveSQL(sql ?? "");
-    setActiveMeta(meta ?? null);
-    if (open) setDrawerOpen(true);
-  }, []);
 
   const patchSession = useCallback((id, patch) => {
     setSessions((prev) =>
@@ -68,9 +50,8 @@ export default function App() {
       },
     ]);
     setActiveId(session_id);
-    resetTechnical();
     return session_id;
-  }, [resetTechnical]);
+  }, []);
 
   useEffect(() => { startSession(); }, []);
 
@@ -178,12 +159,12 @@ export default function App() {
 
   return (
     <div style={styles.root}>
-      {/* ── Left: Files + Sessions ── */}
-      <LeftPanel
+      {/* ── Sidebar: dataset, schema, sessions (plan §7) ── */}
+      <Sidebar
         sessions={sessions}
         activeId={activeId}
         activeSession={active}
-        onSelect={(id) => { setActiveId(id); resetTechnical(); }}
+        onSelect={setActiveId}
         onNew={startSession}
         onRename={(id, name) => patchSession(id, { name, renamed: true })}
         onUpload={handleUpload}
@@ -193,36 +174,28 @@ export default function App() {
         formats={formats}
       />
 
-      {/* ── Middle: Chat ── */}
-      <div style={styles.main}>
-        {!active ? (
+      {/* ── Onboarding view until the active session holds a dataset, then the
+             workspace view: conversation + technical details drawer (plan §7). ── */}
+      {!active ? (
+        <div style={styles.main}>
           <div style={styles.empty}>Select or start a session</div>
-        ) : Object.keys(active.tables).length === 0 ? (
+        </div>
+      ) : Object.keys(active.tables).length === 0 ? (
+        <div style={styles.main}>
           <EmptyState
             onUpload={handleUpload}
             uploadStage={uploadStage}
             uploadError={uploadError}
             formats={formats}
           />
-        ) : (
-          <ChatWindow
-            key={active.id}
-            session={active}
-            onUpdate={(patch) => patchSession(active.id, patch)}
-            onOpenTechnical={openTechnical}
-          />
-        )}
-      </div>
-
-      {/* ── Right: Technical details drawer ── */}
-      <CodePanel
-        sql={activeSQL}
-        meta={activeMeta}
-        open={drawerOpen}
-        onToggle={() => setDrawerOpen((v) => !v)}
-        onSQLChange={setActiveSQL}
-        onExport={active ? () => exportLast(active.id) : null}
-      />
+        </div>
+      ) : (
+        <Workspace
+          key={active.id}
+          session={active}
+          onUpdate={(patch) => patchSession(active.id, patch)}
+        />
+      )}
 
       {pendingUpload && (
         <UploadIntentDialog
