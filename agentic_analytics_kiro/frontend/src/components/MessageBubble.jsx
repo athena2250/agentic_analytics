@@ -85,7 +85,7 @@ export default function MessageBubble({ msg, onOpenTechnical, onRetry, canRetry 
                 for another attempt rather than requiring a retype (plan §13.8). */}
             {msg.error && (
               <div style={styles.errorBox}>
-                <AlertTriangle size={14} color="#d94f4f" style={styles.errorIcon} />
+                <AlertTriangle size={14} color="var(--danger)" style={styles.errorIcon} />
                 <div style={styles.errorBody}>
                   <span style={styles.errorTitle}>That question didn’t complete.</span>
                   <span style={styles.errorDetail}>{msg.error}</span>
@@ -144,7 +144,7 @@ const styles = {
   },
   bubble: {
     maxWidth: "calc(100% - 42px)",
-    borderRadius: 12,
+    borderRadius: "var(--radius-xl)",
     padding: "10px 14px",
     display: "flex",
     flexDirection: "column",
@@ -156,14 +156,14 @@ const styles = {
   bubbleAI: {
     background: "var(--surface)",
     border: "1px solid var(--border)",
-    boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+    boxShadow: "var(--shadow-card)",
   },
   bubbleUser: {
     background: "var(--accent)",
-    color: "#fff",
+    color: "var(--on-accent)",
     maxWidth: 480,
   },
-  userText: { fontSize: 14, lineHeight: 1.6, color: "#fff" },
+  userText: { fontSize: 14, lineHeight: 1.6, color: "var(--on-accent)" },
   aiText: { fontSize: 14, color: "var(--text)", lineHeight: 1.6 },
   section: { display: "flex", flexDirection: "column", gap: 5 },
   emptyResult: {
@@ -172,7 +172,7 @@ const styles = {
     gap: 7,
     background: "var(--surface2)",
     border: "1px solid var(--border)",
-    borderRadius: 8,
+    borderRadius: "var(--radius-md)",
     padding: "10px 12px",
     fontSize: 13,
     color: "var(--text-soft)",
@@ -182,14 +182,14 @@ const styles = {
     display: "flex",
     alignItems: "flex-start",
     gap: 8,
-    background: "rgba(217, 79, 79, 0.06)",
-    border: "1px solid rgba(217, 79, 79, 0.25)",
-    borderRadius: 8,
+    background: "var(--danger-soft)",
+    border: "1px solid var(--danger-border)",
+    borderRadius: "var(--radius-md)",
     padding: "10px 12px",
   },
   errorIcon: { flexShrink: 0, marginTop: 2 },
   errorBody: { display: "flex", flexDirection: "column", gap: 6, minWidth: 0 },
-  errorTitle: { fontSize: 13, fontWeight: 600, color: "#d94f4f" },
+  errorTitle: { fontSize: 13, fontWeight: 600, color: "var(--danger)" },
   errorDetail: {
     fontSize: 12,
     color: "var(--text-soft)",
@@ -203,7 +203,7 @@ const styles = {
     background: "var(--surface)",
     border: "1px solid var(--border)",
     color: "var(--text)",
-    borderRadius: 6,
+    borderRadius: "var(--radius-sm)",
     padding: "3px 9px",
     fontSize: 11,
     fontWeight: 500,

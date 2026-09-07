@@ -1,4 +1,5 @@
 import { useState } from "react";
+import AnalyticalContextStrip from "./AnalyticalContextStrip.jsx";
 import MessageList from "./MessageList.jsx";
 import QuestionInput from "./QuestionInput.jsx";
 import { runQueryStream, exportLast } from "../api.js";
@@ -119,6 +120,9 @@ export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
         text: null,
       };
       putMessage(msgId, aiMsg);
+      // The session's analytical state after this turn (plan §11), kept on the
+      // session so the strip above survives scrolling and message re-renders.
+      if (data.context) onUpdate({ context: data.context });
       // Load the drawer with this answer's detail, but leave it collapsed:
       // the answer is primary, technical detail is on demand (plan §6).
       if (data.sql) openTechnical(aiMsg, false);
@@ -138,14 +142,23 @@ export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
     }
   };
 
-  const send = () => {
-    const q = input.trim();
+  // Asks a question as a normal turn, whoever composed it — the input box, a
+  // suggestion, or the context strip dropping a filter (plan §11). Adjusting
+  // the state that way therefore shows up in the conversation as the question
+  // it really is, rather than changing the answer with no record of why.
+  const ask = (question) => {
+    const q = question.trim();
     if (!q || loading) return;
 
     const userId = Date.now();
     onUpdate((s) => ({ messages: [...s.messages, { id: userId, role: "user", content: q }] }));
-    setInput("");
     runTurn(q, userId + 1);
+  };
+
+  const send = () => {
+    if (!input.trim() || loading) return;
+    ask(input);
+    setInput("");
   };
 
   return (
@@ -159,6 +172,10 @@ export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
           </span>
         )}
       </div>
+
+      {/* ── What the last answer analysed, and the one adjustment that can be
+             made without typing: dropping a filter or the period (plan §11). ── */}
+      <AnalyticalContextStrip context={session.context} onAdjust={ask} disabled={loading} />
 
       {/* ── Messages ── */}
       <MessageList
@@ -210,7 +227,7 @@ const styles = {
     color: "var(--accent)",
     background: "var(--accent-soft)",
     border: "1px solid var(--accent-border)",
-    borderRadius: 20,
+    borderRadius: "var(--radius-pill)",
     padding: "1px 8px",
   },
 };

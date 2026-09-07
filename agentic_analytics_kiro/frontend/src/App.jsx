@@ -51,6 +51,11 @@ export default function App() {
         unified: null,
         uploadedFiles: [],           // [{name, size}] for the files panel
         profile: null,               // per-table column profile, once loaded
+        // Structured analytical state from the last turn (plan §11) — what the
+        // conversation is currently measuring, by what, filtered how. Null
+        // until a question has been answered, and never carried across
+        // sessions: a new session is a new analytical context (§5).
+        context: null,
       },
     ]);
     setActiveId(session_id);

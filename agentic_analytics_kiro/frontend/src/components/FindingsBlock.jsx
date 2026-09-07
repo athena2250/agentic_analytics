@@ -70,7 +70,7 @@ const styles = {
   kpi: {
     background: "var(--surface2)",
     border: "1px solid var(--border)",
-    borderRadius: 10,
+    borderRadius: "var(--radius-lg)",
     padding: "10px 12px",
     minWidth: 0,
   },

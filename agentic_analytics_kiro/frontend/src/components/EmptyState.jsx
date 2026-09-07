@@ -60,5 +60,5 @@ const styles = {
     margin: "0 0 28px",
     lineHeight: 1.5,
   },
-  error: { fontSize: 12, color: "#d9534f", marginTop: 12, lineHeight: 1.5 },
+  error: { fontSize: 12, color: "var(--danger)", marginTop: 12, lineHeight: 1.5 },
 };

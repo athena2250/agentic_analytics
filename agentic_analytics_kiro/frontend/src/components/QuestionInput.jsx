@@ -66,9 +66,9 @@ const styles = {
     gap: 8,
     background: "var(--bg)",
     border: "1px solid var(--border)",
-    borderRadius: 12,
+    borderRadius: "var(--radius-xl)",
     padding: "8px 8px 8px 14px",
-    boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+    boxShadow: "var(--shadow-raised)",
   },
   textarea: {
     flex: 1,
@@ -85,8 +85,8 @@ const styles = {
   sendBtn: {
     background: "var(--accent)",
     border: "none",
-    color: "#fff",
-    borderRadius: 8,
+    color: "var(--on-accent)",
+    borderRadius: "var(--radius-md)",
     width: 32,
     height: 32,
     display: "flex",

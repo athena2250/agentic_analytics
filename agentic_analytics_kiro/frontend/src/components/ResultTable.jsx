@@ -82,7 +82,7 @@ const styles = {
   wrap: { display: "flex", flexDirection: "column", gap: 6 },
   tableWrap: {
     overflowX: "auto",
-    borderRadius: 8,
+    borderRadius: "var(--radius-md)",
     border: "1px solid var(--border)",
     background: "var(--surface)",
   },
@@ -126,7 +126,7 @@ const styles = {
     background: "var(--surface)",
     border: "1px solid var(--border)",
     color: "var(--text)",
-    borderRadius: 4,
+    borderRadius: "var(--radius-xs)",
     padding: "1px 7px",
     fontSize: 13,
     cursor: "pointer",

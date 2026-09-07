@@ -176,7 +176,7 @@ Everything under "existing"/"evolved" keeps its current file; "NEW" items are ad
 4. Extend upload/query responses to include enough structured info for the UI's "Dataset ready" card (row count, column count, date span) without the frontend having to compute it client-side from a 5-row sample.
 
 **Recommended (should land in an early post-MVP phase, not blocking):**
-5. Structured analytical state object attached to `session.history` entries (metric/dimension/filters/time period) alongside the existing raw SQL/text history, to make follow-ups like "only California" more reliable than pure LLM prompt-stuffing (§11).
+5. **Implemented:** structured analytical state attached to `session.history` entries (metric/dimension/filters/time period) alongside the existing raw SQL/text history, so follow-ups like "only California" are answered against stated facts rather than pure LLM prompt-stuffing (§11).
 6. A `POST /session/{sid}/query/stream` (SSE) endpoint emitting the event model in §10, alongside (not replacing) the existing synchronous `/query` for simple cases.
 7. Multi-step investigation: turn `_detect_intent`'s single keyword match into an actual plan (which sub-questions to investigate) — this is a real agent-loop change, out of scope for the UI plan itself but the UI's `ActivityTrace` component (§8) is designed to display whatever steps this eventually emits.
 
@@ -202,7 +202,7 @@ Everything under "existing"/"evolved" keeps its current file; "NEW" items are ad
 
 MVP: keep conversation state as it is today (raw text history feeding the LLM prompt) — this already works reasonably per the existing `history[-3:]` injection.
 
-Post-MVP (Recommended, §9.5): introduce a structured `AnalyticalContext` per session:
+**Implemented (§9.5):** a structured `AnalyticalContext` per session, on top of — not instead of — the raw text history:
 ```
 {
   dataset_id,
@@ -215,7 +215,15 @@ Post-MVP (Recommended, §9.5): introduce a structured `AnalyticalContext` per se
   last_finding_summary: string | null,
 }
 ```
-This is populated/updated by the backend after each turn (parsed from the generated SQL + LLM's stated intent) and sent back to the UI so the sidebar can show "Currently analyzing: {metric} by {dimension}, filtered to {filters}" as a persistent, editable strip above the conversation — giving users a non-chat way to see/adjust what's being asked, without hardcoding what "metric" or "dimension" mean for their dataset.
+This is populated by the backend after each turn and sent back to the UI, which shows it as a persistent strip above the conversation — a non-chat way to see and adjust what's being asked, with no hardcoded idea of what "metric" or "dimension" mean for a given dataset.
+
+How it is derived (`analytical_context.py`): from the SQL that actually ran, parsed by DuckDB itself via `json_serialize_sql` — the metric is the first aggregate in the select list, the dimension the first `GROUP BY` expression (positional ones resolved against the select list), the filters the AND-ed `WHERE` predicates. Which of those predicates are *time* filters comes from the profile's `role: "date"` labels (§5), never from column names; a period-vs-period query — two ranges OR-ed on one date column — fills `time_period` and `comparison_period`. Anything the walk can't structure is counted, not invented: the context then carries `partial: true`, the prompt says parts of the previous query aren't captured, and the strip says "+ conditions not shown" rather than presenting a partial list as the whole state. An unparseable query yields the empty context with `parsed: false`, and a failure to derive state never costs the user their answer.
+
+Where it is used:
+- `session.context` (latest) plus a copy on each `session.history` entry, so a past turn's state survives later turns.
+- Injected into the SQL-generation prompt as a `CURRENT ANALYTICAL STATE` block, which is the point of the exercise — a follow-up usually modifies one part of that state and keeps the rest.
+- Returned on every `/query` and `/query/stream` answer, and readable on its own via `GET /session/{sid}/context` (the empty context before the first turn, not an error).
+- Rendered by `AnalyticalContextStrip.jsx` above the conversation. "Editable" means the adjustment a strip can make honestly: removing a filter or the time period sends an ordinary question (`ask()` in `ChatWindow`), so the change appears in the conversation as a visible turn instead of mutating state silently.
 
 ## 12. Design System
 
@@ -227,6 +235,15 @@ This is populated/updated by the backend after each turn (parsed from the genera
 - **Tables:** `ResultTable` as-is — sortable, paginated, ellipsis-truncated cells.
 - **Inputs:** existing textarea/button styling from `ChatWindow` reused for the question input.
 - **States:** loading (existing thinking-dots → replaced per §10), empty (new), error (existing, red text — sufficient for MVP).
+
+**Implemented.** The tokens all live in `frontend/src/index.css` `:root`; components keep their inline styles and reference the tokens as `var(--…)` strings, so there is one place to change a colour, an elevation, or a radius:
+
+- **State colours:** `--danger` / `--danger-soft` / `--danger-border` (the two near-identical reds previously in use are now one value), `--success`, `--on-accent` for text on the accent fill, `--accent-wash` for accent-tinted hover surfaces, `--scrim` for the modal backdrop. No component holds a raw hex or `rgba()` any more.
+- **Elevation:** four steps by role — `--shadow-card` (cards and bubbles, including the dataset summary card, previously a step heavier), `--shadow-raised` (floating controls such as the question input), `--shadow-float` (chart tooltip), `--shadow-overlay` (the upload-intent dialog).
+- **Radii:** `--radius-xs/sm/md/lg/xl/pill` (4/6/8/10/12/999). The ad-hoc 5, 7 and 14px values collapse into the neighbouring step, and the 20px chips become true pills; cards land in the 8–12px range §12 asks for.
+- **Typography:** unchanged — Inter throughout, `--mono` confined to the SQL view, schema explorer, context strip and sidebar's technical labels.
+- **Spacing:** left as raw numbers per the bullet above; the rhythm is documented as a comment in `:root` for new components to follow.
+- **Charts:** the library question is settled by not taking one — `ResultChart.jsx` is hand-rolled SVG drawing from the same tokens (`--accent` as the single series colour), so charts inherit the palette with no third-party dependency.
 
 ## 13. User Flows
 

@@ -79,7 +79,7 @@ export default function CodePanel({ sql, meta, open, onToggle, onSQLChange, onEx
             </button>
           )}
           <button style={styles.actionBtn} onClick={copy} title="Copy SQL" disabled={isEmpty}>
-            {copied ? <Check size={12} color="#4caf50" /> : <Copy size={12} />}
+            {copied ? <Check size={12} color="var(--success)" /> : <Copy size={12} />}
           </button>
           <button style={styles.actionBtn} onClick={onToggle} title="Collapse">
             <PanelRightClose size={13} />
@@ -135,7 +135,7 @@ const styles = {
     color: "var(--text-muted)",
     display: "flex",
     padding: 4,
-    borderRadius: 5,
+    borderRadius: "var(--radius-xs)",
   },
   railLabel: {
     display: "flex",
@@ -186,7 +186,7 @@ const styles = {
     display: "flex",
     alignItems: "center",
     padding: "3px 5px",
-    borderRadius: 5,
+    borderRadius: "var(--radius-xs)",
     cursor: "pointer",
     transition: "background 0.1s",
   },
@@ -217,7 +217,7 @@ const styles = {
     background: "var(--surface2)",
     border: "1px solid var(--border)",
     color: "var(--text)",
-    borderRadius: 6,
+    borderRadius: "var(--radius-sm)",
     padding: "5px 10px",
     fontSize: 11,
     fontWeight: 500,

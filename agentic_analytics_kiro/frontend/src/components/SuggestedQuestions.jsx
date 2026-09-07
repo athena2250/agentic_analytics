@@ -134,7 +134,7 @@ const styles = {
     background: "var(--surface)",
     border: "1px solid var(--border)",
     color: "var(--text-soft)",
-    borderRadius: 20,
+    borderRadius: "var(--radius-pill)",
     padding: "5px 13px",
     fontSize: 12,
     cursor: "pointer",

@@ -28,7 +28,7 @@ const styles = {
     background: "none",
     border: "1px solid var(--border)",
     color: "var(--text-muted)",
-    borderRadius: 6,
+    borderRadius: "var(--radius-sm)",
     padding: "3px 9px",
     fontSize: 11,
     fontWeight: 500,

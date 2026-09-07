@@ -55,7 +55,7 @@ const styles = {
     display: "flex",
     alignItems: "center",
     padding: 4,
-    borderRadius: 5,
+    borderRadius: "var(--radius-xs)",
     cursor: "pointer",
     flexShrink: 0,
     marginTop: 2,

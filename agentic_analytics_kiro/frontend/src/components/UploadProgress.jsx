@@ -62,9 +62,9 @@ export default function UploadProgress({ stage, error, compact = false }) {
       {error && (
         <div style={styles.row}>
           <span style={styles.icon}>
-            <AlertCircle size={12} color="#d9534f" />
+            <AlertCircle size={12} color="var(--danger)" />
           </span>
-          <span style={{ ...styles.label, color: "#d9534f" }}>{error}</span>
+          <span style={{ ...styles.label, color: "var(--danger)" }}>{error}</span>
         </div>
       )}
     </div>
@@ -80,7 +80,7 @@ const styles = {
     padding: "14px 16px",
     background: "var(--surface)",
     border: "1px solid var(--border)",
-    borderRadius: 10,
+    borderRadius: "var(--radius-lg)",
     textAlign: "left",
   },
   rootCompact: {

@@ -400,7 +400,7 @@ const styles = {
     gap: 8,
     background: "var(--surface)",
     border: "1px solid var(--border)",
-    borderRadius: 10,
+    borderRadius: "var(--radius-lg)",
     padding: "12px 14px",
     // The bubble shrink-wraps its content, so without a floor a two-column
     // result squeezes the plot into ~70px. Never wider than the bubble.
@@ -453,9 +453,9 @@ const styles = {
     pointerEvents: "none",
     background: "var(--surface)",
     border: "1px solid var(--border2)",
-    borderRadius: 8,
+    borderRadius: "var(--radius-md)",
     padding: "6px 9px",
-    boxShadow: "0 2px 8px rgba(0,0,0,0.10)",
+    boxShadow: "var(--shadow-float)",
     whiteSpace: "nowrap",
     zIndex: 2,
   },

@@ -131,7 +131,7 @@ const styles = {
     fontWeight: 600,
     color: "var(--text-muted)",
     background: "var(--surface2)",
-    borderRadius: 999,
+    borderRadius: "var(--radius-pill)",
     padding: "1px 6px",
   },
   body: {
@@ -161,7 +161,7 @@ const styles = {
     alignItems: "center",
     gap: 6,
     padding: "3px 6px 3px 22px",
-    borderRadius: 5,
+    borderRadius: "var(--radius-xs)",
     cursor: "default",
   },
   colName: {
@@ -178,7 +178,7 @@ const styles = {
     fontSize: 9.5,
     color: "var(--text-muted)",
     border: "1px solid var(--border2)",
-    borderRadius: 999,
+    borderRadius: "var(--radius-pill)",
     width: 13,
     height: 13,
     display: "flex",

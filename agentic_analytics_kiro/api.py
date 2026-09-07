@@ -37,6 +37,9 @@ from loader import (
     load_files, schema_summary, rich_schema_summary, profile_tables,
     pick_default_columns, supported_formats, dataset_summary,
 )
+from analytical_context import (
+    derive_context, describe_context, summarize_result, empty_context,
+)
 from dateutil import parser as date_parser
 
 app = FastAPI(title="Agentic Analytics API")
@@ -83,6 +86,12 @@ class Session:
         # by /upload, /profile and the fallback SQL path. Invalidated (set to
         # None) whenever new files land, so it can never describe stale tables.
         self.profile: dict | None = None
+        # Structured analytical state (plan §11): what the last turn measured,
+        # broken down by what, filtered how, over which period — derived from
+        # the SQL that ran. Read back by the UI's context strip and fed into
+        # the next turn's SQL prompt as facts rather than prose. None until a
+        # turn has run.
+        self.context: dict | None = None
 
 _sessions: dict[str, Session] = {}
 
@@ -181,6 +190,17 @@ def _generate_sql(query: str, session: Session) -> str:
     default_table = session.unified or next(iter(session.tables))
     schema = rich_schema_summary(session.tables, session.con)
 
+    # The previous turn's state, stated explicitly (plan §11). A follow-up
+    # ("only California", "same thing for last year") usually *modifies* this
+    # rather than replacing it, and saying so beats hoping the model re-derives
+    # it from the SQL text in the history above.
+    state = describe_context(session.context)
+    state_block = f"""
+CURRENT ANALYTICAL STATE (what the previous answer showed — a follow-up most
+likely adjusts one part of this and keeps the rest):
+{state}
+""" if state else ""
+
     prompt = f"""You are a DuckDB SQL expert. Generate a single accurate SQL query.
 
 SCHEMA (table name, columns, types, sample values):
@@ -198,6 +218,7 @@ RULES:
 
 CONVERSATION HISTORY:
 {history}
+{state_block}
 
 USER REQUEST: {query}
 
@@ -361,6 +382,16 @@ def get_profile(sid: str):
     })
 
 
+@app.get("/session/{sid}/context")
+def get_context(sid: str):
+    """The session's current analytical state (plan §11). The same object the
+    last `/query` returned — served separately so the UI can restore the strip
+    without replaying the conversation. Before the first turn it is the empty
+    context, not an error: "nothing is being analysed yet" is a real state."""
+    session = get_session(sid)
+    return _json({"context": session.context or empty_context(sid)})
+
+
 class QueryRequest(BaseModel):
     query: str
 
@@ -382,7 +413,7 @@ class QueryRequest(BaseModel):
 # plus ERROR, which the stream needs because a failure after the response has
 # started can no longer be reported as an HTTP status.
 
-def _query_pipeline(session: Session, raw_query: str):
+def _query_pipeline(session: Session, raw_query: str, session_id: str | None = None):
     """Yield (event, payload) as each step of one turn completes; the last
     event is always RESPONSE_READY carrying the same dict `/query` returns."""
     started = time.perf_counter()
@@ -444,10 +475,24 @@ def _query_pipeline(session: Session, raw_query: str):
         "duration_ms": round((time.perf_counter() - started) * 1000, 1),
     }
 
+    # Structured state for this turn, derived from the SQL DuckDB actually ran
+    # (plan §11). Stored on the session for the next turn's prompt and kept on
+    # the history entry alongside the raw SQL/text, so a turn's state can still
+    # be read after later turns have moved the session's state on (§9.5).
+    try:
+        context = derive_context(sql, session.con, session.profile, raw_query, dataset_id=session_id)
+        context["last_finding_summary"] = summarize_result(result_df, context)
+    except Exception:
+        # The state is an aid to the next turn, not this turn's answer — the
+        # user keeps their result and the strip simply shows nothing resolved.
+        context = empty_context(session_id, raw_query)
+    session.context = context
+
     session.history.append({
         "query": query,
         "sql": sql,
         "result_summary": result_df.head(3).to_string(index=False),
+        "context": context,
     })
 
     response: dict = {
@@ -461,6 +506,9 @@ def _query_pipeline(session: Session, raw_query: str):
         "tables_used": _tables_used(sql, session),
         "validation": validation,
         "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+        # The session's analytical state after this turn, so the UI's context
+        # strip updates from the answer itself rather than a second round trip.
+        "context": context,
     }
 
     if intent == "predict":
@@ -500,7 +548,7 @@ def run_query(sid: str, body: QueryRequest):
     # endpoint's contract is unchanged, the intermediate steps are simply not
     # observable over a single blocking request (plan §10).
     response = None
-    for event, payload in _query_pipeline(session, body.query):
+    for event, payload in _query_pipeline(session, body.query, sid):
         if event == "RESPONSE_READY":
             response = payload["response"]
 
@@ -528,7 +576,7 @@ def run_query_stream(sid: str, body: QueryRequest):
 
     def stream():
         try:
-            for event, payload in _query_pipeline(session, body.query):
+            for event, payload in _query_pipeline(session, body.query, sid):
                 if event == "RESPONSE_READY":
                     response = payload["response"]
                     # An .xlsx body can't travel down an event stream, so the

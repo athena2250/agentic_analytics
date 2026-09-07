@@ -184,7 +184,7 @@ const styles = {
     transition: "background 0.15s",
   },
   panelDragging: {
-    background: "rgba(124,106,247,0.04)",
+    background: "var(--accent-wash)",
   },
   logo: {
     display: "flex",
@@ -226,7 +226,7 @@ const styles = {
     display: "flex",
     alignItems: "center",
     padding: "2px 4px",
-    borderRadius: 4,
+    borderRadius: "var(--radius-xs)",
     cursor: "pointer",
   },
   sectionBody: {
@@ -240,7 +240,7 @@ const styles = {
     alignItems: "center",
     gap: 6,
     padding: "5px 6px",
-    borderRadius: 6,
+    borderRadius: "var(--radius-sm)",
     cursor: "default",
   },
   fileName: {
@@ -259,7 +259,7 @@ const styles = {
     background: "none",
     border: "1px solid var(--border)",
     color: "var(--text-muted)",
-    borderRadius: 6,
+    borderRadius: "var(--radius-sm)",
     padding: "4px 8px",
     fontSize: 11,
     cursor: "pointer",
@@ -283,7 +283,7 @@ const styles = {
     alignItems: "center",
     gap: 6,
     padding: "4px 6px",
-    borderRadius: 6,
+    borderRadius: "var(--radius-sm)",
   },
   tableInfo: { display: "flex", flexDirection: "column", minWidth: 0 },
   tableName: {
