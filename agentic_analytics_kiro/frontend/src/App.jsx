@@ -3,7 +3,7 @@ import Sidebar from "./components/Sidebar.jsx";
 import Workspace from "./components/Workspace.jsx";
 import EmptyState from "./components/EmptyState.jsx";
 import UploadIntentDialog from "./components/UploadIntentDialog.jsx";
-import { createSession, uploadFiles, getProfile, getFormats } from "./api.js";
+import { createSession, uploadFiles, getProfile, getRelationships, getFormats } from "./api.js";
 
 // A session holding a dataset takes that dataset's name, so the sessions list
 // reads as a list of datasets (plan §13.11). User renames always win.
@@ -51,6 +51,10 @@ export default function App() {
         unified: null,
         uploadedFiles: [],           // [{name, size}] for the files panel
         profile: null,               // per-table column profile, once loaded
+        // Candidate joins between this session's tables (plan §16). Null until
+        // looked at; [] means "looked, and these tables don't share values",
+        // which is a different statement.
+        relationships: null,
         // Structured analytical state from the last turn (plan §11) — what the
         // conversation is currently measuring, by what, filtered how. Null
         // until a question has been answered, and never carried across
@@ -129,6 +133,12 @@ export default function App() {
       try {
         const profile = await getProfile(sessionId);
         patchSession(sessionId, { profile });
+        // Only asked once a session holds more than one table: with one table
+        // the answer is trivially empty and the round trip buys nothing.
+        if (Object.keys(profile.tables ?? {}).length > 1) {
+          const relationships = await getRelationships(sessionId);
+          patchSession(sessionId, { relationships });
+        }
       } catch (e) {
         // The data is loaded and queryable; only the per-column detail
         // (schema explorer, suggestions) is missing — the summary card still

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Upload, FileText, ChevronDown, ChevronRight, Plus, Database } from "lucide-react";
 import DatasetSummaryCard from "./DatasetSummaryCard.jsx";
 import SchemaExplorer from "./SchemaExplorer.jsx";
+import RelationshipList from "./RelationshipList.jsx";
 import UploadProgress from "./UploadProgress.jsx";
 import UploadDropzone, { useFilePicker, useDropTarget } from "./UploadDropzone.jsx";
 import SessionList from "./SessionList.jsx";
@@ -116,6 +117,12 @@ export default function Sidebar({
 
       {/* ══ SCHEMA EXPLORER ══ */}
       <SchemaExplorer profile={activeSession?.profile} />
+
+      {/* ══ RELATIONSHIPS — only meaningful across two or more tables (§16) ══ */}
+      <RelationshipList
+        relationships={activeSession?.relationships}
+        tableCount={Object.keys(activeSession?.tables ?? {}).length}
+      />
 
       {/* ══ TABLES SECTION — fallback when profiling is unavailable ══ */}
       {activeSession && !activeSession.profile && Object.keys(activeSession.tables).length > 0 && (

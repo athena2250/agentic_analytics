@@ -104,6 +104,18 @@ export async function getProfile(sid) {
   return r.json();
 }
 
+/**
+ * Candidate joins between the session's tables (plan §16). Returns [] for a
+ * single-table session — an empty list is the real answer there, not a
+ * failure, so callers render "no relationships" rather than an error.
+ */
+export async function getRelationships(sid) {
+  const r = await fetch(`${BASE}/session/${sid}/relationships`);
+  if (!r.ok) throw new Error(await r.text());
+  const { relationships } = await r.json();
+  return relationships;
+}
+
 export async function exportLast(sid) {
   const r = await fetch(`${BASE}/session/${sid}/export`);
   if (!r.ok) throw new Error(await r.text());

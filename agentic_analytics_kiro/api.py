@@ -31,8 +31,8 @@ from pydantic import BaseModel
 # Add current dir to path so sibling modules resolve
 sys.path.insert(0, os.path.dirname(__file__))
 
-from config import SPELL_CORRECTIONS, LLM_URL, LLM_MODEL, CACHE_TTL
-from predictor import predict_sales, infer_date_column, infer_measure_column
+from config import LLM_URL, LLM_MODEL, CACHE_TTL
+from predictor import predict_series, infer_date_column, infer_measure_column
 from loader import (
     load_files, schema_summary, rich_schema_summary, profile_tables,
     pick_default_columns, supported_formats, dataset_summary,
@@ -40,7 +40,13 @@ from loader import (
 from analytical_context import (
     derive_context, describe_context, summarize_result, empty_context,
 )
+from anomaly import detect_anomalies, describe_anomalies
+from crossdataset import (
+    infer_relationships, describe_relationships, plan_correlation,
+    correlation_sql, correlate, describe_correlation,
+)
 from dateutil import parser as date_parser
+from difflib import SequenceMatcher
 
 app = FastAPI(title="Agentic Analytics API")
 
@@ -86,6 +92,11 @@ class Session:
         # by /upload, /profile and the fallback SQL path. Invalidated (set to
         # None) whenever new files land, so it can never describe stale tables.
         self.profile: dict | None = None
+        # Candidate joins between this session's tables (plan §16), computed
+        # from the profile and invalidated with it. An empty list is a real
+        # answer ("these tables don't appear to relate"); None means not yet
+        # looked at.
+        self.relationships: list[dict] | None = None
         # Structured analytical state (plan §11): what the last turn measured,
         # broken down by what, filtered how, over which period — derived from
         # the SQL that ran. Read back by the UI's context strip and fed into
@@ -108,12 +119,87 @@ def _ensure_profile(session: Session) -> dict:
         session.profile = profile_tables(session.tables, session.con)
     return session.profile
 
+
+def _ensure_relationships(session: Session) -> list[dict]:
+    """Candidate joins between the session's tables, computed once per set of
+    loaded tables. A single-table session has none by definition."""
+    if session.relationships is None:
+        if len(session.tables) < 2:
+            session.relationships = []
+        else:
+            try:
+                session.relationships = infer_relationships(
+                    session.tables, session.con, _ensure_profile(session)
+                )
+            except Exception:
+                # Relationship inference is an aid to the SQL prompt, not part
+                # of any answer — a failure costs the hints, not the turn.
+                session.relationships = []
+    return session.relationships
+
 # ── Helpers (ported from app.py) ──────────────────────────────────────────────
 
-_CORRECTION_RE = re.compile("|".join(re.escape(k) for k in SPELL_CORRECTIONS))
+# Typo correction, derived from the session's own schema (plan §1, §15).
+#
+# The legacy path used a fixed dictionary of sales-domain misspellings
+# ("revnue" -> "revenue", "departmnt" -> "department"). That is a column-name
+# literal assumption in the live /query path: it is useless on a dataset with
+# no such columns, and actively wrong on one where "revnue" is a real column
+# name. Instead, a token is only rewritten when it is a near-miss for a table
+# or column name this session actually loaded.
 
-def _normalize(query: str) -> str:
-    return _CORRECTION_RE.sub(lambda m: SPELL_CORRECTIONS[m.group()], query.lower())
+# Below this ratio the "correction" is a different word, not a typo. 0.82 keeps
+# one-or-two-character slips on words of ordinary length and rejects the rest.
+_MIN_TYPO_SIMILARITY = 0.82
+
+# Short tokens are excluded: at 3 characters or fewer, almost every edit turns
+# one real word into another ("sum" -> "sun", "id" -> "in").
+_MIN_TYPO_LEN = 4
+
+_WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _schema_vocabulary(session: "Session") -> list[str]:
+    """Every table and column name this session actually holds."""
+    vocab: list[str] = []
+    for tname, cols in session.tables.items():
+        vocab.append(tname)
+        vocab.extend(cols)
+    if session.unified:
+        vocab.append(session.unified)
+    return vocab
+
+
+def _normalize(query: str, session: "Session | None" = None) -> str:
+    """Rewrite near-miss tokens toward real schema names, leaving everything
+    else — including the caller's capitalisation — exactly as typed.
+
+    Without a session there is no vocabulary to correct against, so the query
+    is returned unchanged rather than run through a guess."""
+    if session is None:
+        return query
+
+    vocab = _schema_vocabulary(session)
+    if not vocab:
+        return query
+
+    # Exact matches (case-insensitive) are already correct; never "fix" a token
+    # that names something real.
+    exact = {name.lower() for name in vocab}
+
+    def fix(match: re.Match) -> str:
+        token = match.group()
+        lowered = token.lower()
+        if len(token) < _MIN_TYPO_LEN or lowered in exact:
+            return token
+        best, best_score = None, _MIN_TYPO_SIMILARITY
+        for name in vocab:
+            score = SequenceMatcher(None, lowered, name.lower()).ratio()
+            if score > best_score:
+                best, best_score = name, score
+        return best if best is not None else token
+
+    return _WORD_RE.sub(fix, query)
 
 def _normalize_dates(query: str) -> str:
     words = query.split()
@@ -137,12 +223,21 @@ def _normalize_dates(query: str) -> str:
 _INTENT_KEYWORDS = {
     "predict": ["predict", "forecast", "future"],
     "export":  ["excel", "export"],
+    # Cross-dataset comparison (plan §16). Checked before "insight" because
+    # "why did spend affect signups" is a correlation question first and a
+    # narrative second — but only ever on a session holding more than one
+    # table, since these words are ordinary analysis language otherwise.
+    "correlate": ["correlat", "affect", "impact", "driven by", "drive",
+                  "relationship between", "related to", "move with",
+                  "compare " ],
     "insight": ["insight", "analyze", "why", "explain"],
 }
 
-def _detect_intent(query: str) -> str:
+def _detect_intent(query: str, table_count: int = 1) -> str:
     q = query.lower()
     for intent, kws in _INTENT_KEYWORDS.items():
+        if intent == "correlate" and table_count < 2:
+            continue
         if any(k in q for k in kws):
             return intent
     return "data"
@@ -167,10 +262,24 @@ def _tables_used(sql: str, session: Session) -> list[str]:
     return used
 
 
+# Statements that change data or the database, rejected before DuckDB sees
+# them. The read-only check can't be "starts with SELECT" alone: a CTE query
+# starts with WITH, and the correlation planner (plan §16) builds one, as does
+# any model answer that names an intermediate result.
+_WRITE_RE = re.compile(
+    r"\b(INSERT|UPDATE|DELETE|MERGE|CREATE|DROP|ALTER|TRUNCATE|ATTACH|DETACH|"
+    r"COPY|EXPORT|IMPORT|INSTALL|LOAD|PRAGMA|SET|CALL)\b",
+    re.IGNORECASE,
+)
+
+
 def _validate_sql(sql: str, session: Session) -> tuple[bool, str]:
     """Validate by doing a DuckDB dry-run (EXPLAIN). Catches real errors, not fake ones."""
-    if not sql or not sql.strip().upper().startswith("SELECT"):
+    head = (sql or "").strip().upper()
+    if not head.startswith(("SELECT", "WITH")):
         return False, "Not a SELECT statement"
+    if _WRITE_RE.search(sql):
+        return False, "Only read-only queries are allowed"
     try:
         session.con.execute(f"EXPLAIN {sql}")
         return True, "valid"
@@ -190,6 +299,18 @@ def _generate_sql(query: str, session: Session) -> str:
     default_table = session.unified or next(iter(session.tables))
     schema = rich_schema_summary(session.tables, session.con)
 
+    # Candidate joins between the session's tables (plan §16). Without this the
+    # model sees several unrelated schemas and has no way to know which columns
+    # line up, so a cross-dataset question gets a single-table answer or an
+    # invented join. Stated as candidates with their evidence — a join it is
+    # told about but shouldn't use is still its call.
+    joins = describe_relationships(_ensure_relationships(session))
+    join_block = f"""
+CANDIDATE JOINS BETWEEN TABLES (measured from shared values, not declared keys —
+use one only if the question actually spans those tables):
+{joins}
+""" if joins else ""
+
     # The previous turn's state, stated explicitly (plan §11). A follow-up
     # ("only California", "same thing for last year") usually *modifies* this
     # rather than replacing it, and saying so beats hoping the model re-derives
@@ -206,7 +327,7 @@ likely adjusts one part of this and keeps the rest):
 SCHEMA (table name, columns, types, sample values):
 {schema}
 DEFAULT TABLE: {default_table}
-
+{join_block}
 RULES:
 - Output ONLY the raw SQL query — no explanation, no markdown, no code fences
 - Use exact column and table names from the schema above
@@ -215,6 +336,8 @@ RULES:
 - For string filters use ILIKE for case-insensitive matching
 - Always include ORDER BY for top-N queries
 - Use LIMIT 200 unless the user specifies a different number
+- Query one table unless the question spans several; if it does, join them on a
+  candidate join above rather than guessing a key
 
 CONVERSATION HISTORY:
 {history}
@@ -264,6 +387,7 @@ def _enrich(df: pd.DataFrame) -> pd.DataFrame:
         df = df.sort_values(date_col)
         df["moving_avg"] = df[measure_col].rolling(7).mean()
         df.attrs["measure_col"] = measure_col
+        df.attrs["date_col"] = date_col
     return df
 
 def _trend(df: pd.DataFrame) -> str:
@@ -272,27 +396,39 @@ def _trend(df: pd.DataFrame) -> str:
         return "increasing 📈" if d > 0 else ("decreasing 📉" if d < 0 else "stable ➡️")
     return "unknown"
 
-def _anomalies(df: pd.DataFrame) -> str:
-    measure_col = df.attrs.get("measure_col") or infer_measure_column(df)
-    if measure_col:
-        mean, std = df[measure_col].mean(), df[measure_col].std()
-        if std and not np.isnan(std):
-            a = df[df[measure_col] > mean + 2 * std]
-            if not a.empty:
-                return a.head(5).to_string(index=False)
-    return "No anomalies detected."
+def _anomalies(df: pd.DataFrame) -> dict:
+    """Robust, two-sided anomaly detection (plan §16).
 
-def _insights(df: pd.DataFrame, query: str) -> str:
+    The old rule — rows more than two standard deviations above the mean — used
+    statistics the outliers themselves move, flagged ~5% of any normal series by
+    construction, and never looked at the low side. `anomaly.detect_anomalies`
+    scores against the median/MAD, seasonally adjusted where the series
+    supports it, and returns the points it found rather than a printed frame.
+    """
+    return detect_anomalies(
+        df,
+        measure_col=df.attrs.get("measure_col"),
+        date_col=df.attrs.get("date_col"),
+    )
+
+def _insights(df: pd.DataFrame, query: str) -> tuple[str, dict | None]:
+    """The analyst narrative, plus the structured anomalies it was built from.
+
+    Both are returned so the UI can show what was actually detected next to the
+    prose, instead of taking the model's word for which points were unusual.
+    """
     if df.empty:
-        return "No data."
+        return "No data.", None
     df = _enrich(df)
+    found = _anomalies(df)
     prompt = (
         f"You are a senior business analyst.\nUser Question: {query}\n"
-        f"Trend: {_trend(df)}\nAnomalies: {_anomalies(df)}\n"
+        f"Trend: {_trend(df)}\nAnomalies: {describe_anomalies(found)}\n"
         f"Data:\n{df.head(10).to_string(index=False)}\n\n"
+        f"Only discuss anomalies listed above; if there are none, say so.\n\n"
         f"Answer:\n1. WHAT HAPPENED\n2. WHY IT HAPPENED\n3. WHAT TO DO NEXT"
     )
-    return _llm(prompt)
+    return _llm(prompt), found
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
@@ -337,6 +473,7 @@ async def upload_files(sid: str, files: list[UploadFile] = File(...)):
         if result["unified"]:
             session.unified = result["unified"]
         session.profile = None  # new tables — any cached profile is now stale
+        session.relationships = None  # …and so are the joins derived from it
 
         schema = {t: cols for t, cols in session.tables.items()}
         sample = result["sample"].to_dict(orient="records")
@@ -382,6 +519,23 @@ def get_profile(sid: str):
     })
 
 
+@app.get("/session/{sid}/relationships")
+def get_relationships(sid: str):
+    """Candidate joins between the session's tables (plan §16).
+
+    Served separately from /profile because it is about the dataset *set*, not
+    any one table: a single-table session gets an empty list, which is a real
+    answer rather than an error. Every record carries the counts it was derived
+    from, so the UI can present a candidate as a candidate."""
+    session = get_session(sid)
+    if not session.tables:
+        raise HTTPException(status_code=400, detail="No data loaded. Upload files first.")
+    return _json({
+        "relationships": _ensure_relationships(session),
+        "tables": list(session.tables),
+    })
+
+
 @app.get("/session/{sid}/context")
 def get_context(sid: str):
     """The session's current analytical state (plan §11). The same object the
@@ -417,8 +571,8 @@ def _query_pipeline(session: Session, raw_query: str, session_id: str | None = N
     """Yield (event, payload) as each step of one turn completes; the last
     event is always RESPONSE_READY carrying the same dict `/query` returns."""
     started = time.perf_counter()
-    query = _normalize_dates(_normalize(raw_query))
-    intent = _detect_intent(query)
+    query = _normalize_dates(_normalize(raw_query, session))
+    intent = _detect_intent(query, table_count=len(session.tables))
 
     # Profiling is normally already done at upload time; it only runs here when
     # a code path below is the first to need it, and only then is it announced.
@@ -429,7 +583,26 @@ def _query_pipeline(session: Session, raw_query: str, session_id: str | None = N
         # "tables"), so the names are its keys.
         yield "PROFILE_COMPLETED", {"tables": list(session.profile)}
 
-    sql = _generate_sql(query, session)
+    # A correlation turn doesn't ask the model for SQL. The alignment — both
+    # measures bucketed onto one calendar grain and joined on it — is built
+    # here (plan §16) so the join behind the coefficient is exactly the one
+    # reported, and so the rows are ordinary result rows the user can read,
+    # chart and export.
+    correlation_plan = None
+    if intent == "correlate":
+        yield "INVESTIGATION_STEP", {"label": "Looking for two measures to align across tables"}
+        correlation_plan = plan_correlation(query, session.tables, session.con,
+                                            _ensure_profile(session))
+
+    if correlation_plan and correlation_plan["ok"]:
+        sql = correlation_sql(correlation_plan)
+    else:
+        if correlation_plan:
+            # Planning failed for a stated reason; the turn continues as an
+            # ordinary question so the user still gets rows, and the reason
+            # travels with the response rather than being swallowed.
+            yield "INVESTIGATION_STEP", {"label": "No alignable pair found — answering as a single-table question"}
+        sql = _generate_sql(query, session)
     yield "SQL_GENERATED", {"sql": sql, "intent": intent}
 
     valid, msg = _validate_sql(sql, session)
@@ -446,7 +619,11 @@ def _query_pipeline(session: Session, raw_query: str, session_id: str | None = N
         sql = _fix_sql(sql, session, msg)
         valid, msg = _validate_sql(sql, session)
 
-    if valid:
+    if valid and correlation_plan and correlation_plan["ok"] and not fix_attempts:
+        # Not model output, so "validated on first attempt" would understate
+        # where it came from.
+        validation = {"status": "planned", "fix_attempts": 0, "error": None}
+    elif valid:
         validation = {
             "status": "repaired" if fix_attempts else "valid",
             "fix_attempts": fix_attempts,
@@ -512,13 +689,37 @@ def _query_pipeline(session: Session, raw_query: str, session_id: str | None = N
     }
 
     if intent == "predict":
-        yield "INVESTIGATION_STEP", {"label": "Fitting a forecast on the returned rows"}
-        pred = predict_sales(result_df)
-        response["forecast"] = pred.to_dict(orient="records") if pred is not None else None
+        yield "INVESTIGATION_STEP", {"label": "Fitting and scoring candidate forecast models"}
+        pred = predict_series(result_df)
+        response["forecast"] = pred["frame"].to_dict(orient="records") if pred else None
+        # How the forecast was arrived at (plan §16): which of the candidate
+        # models won on held-out data, whether it beat a seasonal-naive
+        # baseline, what the band around it means, and how far apart the
+        # forecast steps are. Null when no forecast could be fitted, so the UI
+        # never describes a model that didn't run.
+        response["forecast_meta"] = (
+            {k: v for k, v in pred.items() if k != "frame"} if pred else None
+        )
 
     if intent == "insight":
         yield "INVESTIGATION_STEP", {"label": "Summarising trends and anomalies"}
-        response["insights"] = _insights(result_df, query)
+        response["insights"], response["anomalies"] = _insights(result_df, query)
+
+    if intent == "correlate":
+        if correlation_plan and correlation_plan["ok"]:
+            yield "INVESTIGATION_STEP", {"label": "Measuring how the two aligned series move together"}
+            result = correlate(result_df, correlation_plan)
+            response["text"] = describe_correlation(result)
+        else:
+            # Nothing was correlated, and the response says why rather than
+            # leaving a correlation question quietly answered by one table.
+            reason = (correlation_plan or {}).get("reason", "no alignable pair of measures.")
+            result = {"available": False, "reason": reason}
+            response["text"] = (
+                f"No correlation could be computed: {reason} The rows below "
+                "answer the question as an ordinary single-table query."
+            )
+        response["correlation"] = result
 
     response["duration_ms"] = round((time.perf_counter() - started) * 1000, 1)
     yield "RESPONSE_READY", {"response": response}

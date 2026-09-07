@@ -3,6 +3,8 @@ import ResultChart from "./ResultChart.jsx";
 import FindingsBlock, { deriveKPIs } from "./FindingsBlock.jsx";
 import ActivityTrace from "./ActivityTrace.jsx";
 import ForecastBlock from "./ForecastBlock.jsx";
+import CorrelationBlock from "./CorrelationBlock.jsx";
+import AnomalyBlock from "./AnomalyBlock.jsx";
 import TechnicalDetailsToggle from "./TechnicalDetailsToggle.jsx";
 import { Database, User, Inbox, AlertTriangle, RotateCw } from "lucide-react";
 
@@ -91,7 +93,16 @@ export default function MessageBubble({ msg, onOpenTechnical, onRetry, canRetry 
               </div>
             )}
 
-            <ForecastBlock forecast={msg.forecast} />
+            {/* Cross-dataset comparison (plan §16): stated above the aligned
+                rows it was computed from, and rendered even when it couldn't
+                be computed so the reason is visible. */}
+            <CorrelationBlock correlation={msg.correlation} />
+
+            {/* What the detector flagged, beside the narrative that discusses
+                it — including "nothing unusual", which is a finding. */}
+            <AnomalyBlock anomalies={msg.anomalies} />
+
+            <ForecastBlock forecast={msg.forecast} meta={msg.forecast_meta} />
 
             {/* Asked for a forecast, didn't get one — said plainly, next to the
                 rows that were returned instead. */}

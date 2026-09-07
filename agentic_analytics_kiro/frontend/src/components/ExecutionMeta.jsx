@@ -5,6 +5,10 @@ const VALIDATION_LABELS = {
   valid: "Validated on first attempt",
   repaired: "Repaired, then validated",
   fallback: "Generated SQL failed — schema-driven fallback used",
+  // A correlation turn's SQL is built by the backend's alignment planner
+  // rather than generated, so "validated on first attempt" would misdescribe
+  // where it came from (plan §16).
+  planned: "Built by the cross-dataset alignment planner",
 };
 
 /**

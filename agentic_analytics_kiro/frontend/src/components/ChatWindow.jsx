@@ -109,7 +109,16 @@ export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
         rows: data.rows,
         total_rows: data.total_rows,
         forecast: data.forecast ?? null,
+        // How the forecast was fitted — which model won, whether it beat a
+        // naive baseline, what the band means (plan §16). Null when no
+        // forecast was produced, so nothing describes a model that didn't run.
+        forecast_meta: data.forecast_meta ?? null,
         insights: data.insights ?? null,
+        // The points the detector actually flagged, shown next to the
+        // narrative rather than taking the model's word for them.
+        anomalies: data.anomalies ?? null,
+        // Cross-dataset correlation, present only on a correlate turn.
+        correlation: data.correlation ?? null,
         intent: data.intent ?? null,
         tables_used: data.tables_used ?? [],
         validation: data.validation ?? null,
@@ -117,7 +126,9 @@ export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
         // Client-measured round trip, shown alongside the backend's own
         // server-side timing rather than in place of it.
         durationMs: performance.now() - startedAt,
-        text: null,
+        // A correlate turn states its finding in words; every other turn lets
+        // the result speak for itself.
+        text: data.text ?? null,
       };
       putMessage(msgId, aiMsg);
       // The session's analytical state after this turn (plan §11), kept on the

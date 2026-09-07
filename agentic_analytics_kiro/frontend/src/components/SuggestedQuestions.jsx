@@ -68,6 +68,28 @@ function analyzeProfile(profile) {
   return { tableName, multiTable: entries.length > 1, rowCount, measures, dimensions, dates };
 }
 
+/**
+ * A cross-dataset chip (plan §16), offered only when the backend could
+ * actually answer it: `plan_correlation` aligns two tables that each have a
+ * confidently-detected date column and a numeric measure, so a session missing
+ * either gets no chip rather than a chip that comes back "no alignable pair".
+ * The phrasing uses the wording the intent detector recognises.
+ */
+function crossDatasetSuggestion(profile) {
+  const sides = Object.entries(profile?.tables ?? {})
+    .map(([name, table]) => {
+      const cols = table.columns ?? [];
+      const has = (role) =>
+        cols.find((c) => c.role === role && (c.confidence ?? 0) >= MIN_CONFIDENCE);
+      return { name, date: has("date"), measure: has("measure") };
+    })
+    .filter((t) => t.date && t.measure);
+
+  if (sides.length < 2) return null;
+  const [a, b] = sides;
+  return `Did ${a.measure.name} in ${a.name} affect ${b.measure.name} in ${b.name}?`;
+}
+
 export function buildSuggestions(profile) {
   const p = analyzeProfile(profile);
   if (!p) return [];
@@ -102,6 +124,9 @@ export function buildSuggestions(profile) {
     for (const d of dimensions.slice(0, 3)) out.push(`Count records by ${d.name}${scope}`);
     if (dateName) out.push(`Show record counts over time by ${dateName}${scope}`);
   }
+  const crossDataset = crossDatasetSuggestion(profile);
+  if (crossDataset) out.push(crossDataset);
+
   if (!out.length) out.push(`Show the first 50 rows of ${tableName}`);
 
   return [...new Set(out)].slice(0, 4);
