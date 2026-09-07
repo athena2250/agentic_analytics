@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Database } from "lucide-react";
+import { Send } from "lucide-react";
 import MessageBubble from "./MessageBubble.jsx";
 import SuggestedQuestions from "./SuggestedQuestions.jsx";
 import { runQuery } from "../api.js";
@@ -113,34 +113,23 @@ export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
 
       {/* ── Messages ── */}
       <div style={styles.messages}>
-        {/* Welcome message */}
-        <div style={styles.welcome}>
-          <div style={styles.welcomeAvatar}>
-            <Database size={18} color="var(--accent)" />
-          </div>
-          <div style={styles.welcomeBubble}>
-            <p style={styles.welcomeTitle}>Agentic Analytics</p>
-            <p style={styles.welcomeText}>
-              {hasData
-                ? `${Object.keys(session.tables).length} table(s) loaded. Ask me anything about your data.`
-                : "Upload your data files in the left panel, then ask me anything about them."}
-            </p>
-          </div>
-        </div>
-
-        {/* Suggestion chips — derived from the dataset profile, only before the first question */}
-        {session.messages.length === 0 && hasData && (
-          <SuggestedQuestions profile={session.profile} onPick={setInput} />
-        )}
-
         {/* Message list */}
         {session.messages.map((msg) => (
           <MessageBubble
             key={msg.id}
             msg={msg}
+            profile={session.profile}
+            datasetName={session.name}
             onOpenTechnical={openTechnical}
           />
         ))}
+        {/* Suggestion chips — derived from the dataset profile, shown until the
+            first question is asked. The upload result is itself a message, so
+            the gate is "no user turn yet", not "no messages". */}
+        {!session.messages.some((m) => m.role === "user") && hasData && (
+          <SuggestedQuestions profile={session.profile} onPick={setInput} />
+        )}
+
         <div ref={bottomRef} style={{ height: 1 }} />
       </div>
 
@@ -209,27 +198,6 @@ const styles = {
     flexDirection: "column",
     gap: 0,
   },
-  welcome: {
-    display: "flex",
-    gap: 12,
-    alignItems: "flex-start",
-    marginBottom: 20,
-    animation: "fadeIn 0.3s ease",
-  },
-  welcomeAvatar: {
-    width: 32,
-    height: 32,
-    borderRadius: "50%",
-    background: "var(--accent-soft)",
-    border: "1px solid var(--accent-border)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  welcomeBubble: { paddingTop: 4 },
-  welcomeTitle: { fontSize: 13, fontWeight: 600, color: "var(--text)", marginBottom: 2 },
-  welcomeText: { fontSize: 13, color: "var(--text-soft)", lineHeight: 1.6 },
   inputArea: {
     padding: "12px 20px 14px",
     borderTop: "1px solid var(--border)",

@@ -1,9 +1,10 @@
 import ResultTable from "./ResultTable.jsx";
 import ResultChart from "./ResultChart.jsx";
 import FindingsBlock, { deriveKPIs } from "./FindingsBlock.jsx";
+import DatasetSummaryCard from "./DatasetSummaryCard.jsx";
 import { Database, User, TrendingUp, SlidersHorizontal, Inbox, Loader2 } from "lucide-react";
 
-export default function MessageBubble({ msg, onOpenTechnical }) {
+export default function MessageBubble({ msg, profile, datasetName, onOpenTechnical }) {
   const isUser = msg.role === "user";
 
   // Findings are derived from the result's shape only — never from column names.
@@ -42,6 +43,13 @@ export default function MessageBubble({ msg, onOpenTechnical }) {
 
             {/* ── 1. Narrative: the answer, stated first ── */}
             {msg.text && <p style={styles.aiText}>{msg.text}</p>}
+
+            {/* ── 1b. Dataset ready: the profiling result, stated as a card
+                   rather than a sentence (plan §6). Appears once GET /profile
+                   returns; if profiling failed there is simply no card. ── */}
+            {msg.datasetReady && profile && (
+              <DatasetSummaryCard profile={profile} name={datasetName} variant="full" />
+            )}
 
             {/* ── 2. Findings: insight narrative + KPI cards ── */}
             <FindingsBlock narrative={msg.insights ?? null} kpis={kpis} />

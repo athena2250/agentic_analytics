@@ -9,14 +9,15 @@ import { Check, Loader2, AlertCircle } from "lucide-react";
  *   POST /upload   — transfers the files and loads them into DuckDB in one call,
  *                    so it is shown as one step rather than split into an
  *                    "Uploading" and "Loading" pair the UI cannot actually observe.
- *   GET  /profile  — computes the column profiles.
- *
- * §6 also sketches a "Semantic labeling" step; no such step exists in the live
- * upload path today, so it is omitted rather than faked.
+ *   GET  /profile  — computes the column profiles and, in the same pass,
+ *                    classifies each column's role (measure/dimension/date/
+ *                    identifier). §6 sketches that labeling as its own step,
+ *                    but it is one request, so it is shown as one step rather
+ *                    than split into a stage the UI cannot actually observe.
  */
 const STEPS = [
   { key: "uploading", label: "Uploading and loading into DuckDB" },
-  { key: "profiling", label: "Profiling columns" },
+  { key: "profiling", label: "Profiling columns and labeling roles" },
 ];
 
 const ORDER = ["uploading", "profiling", "ready"];
