@@ -2,9 +2,9 @@ import ResultTable from "./ResultTable.jsx";
 import ResultChart from "./ResultChart.jsx";
 import FindingsBlock, { deriveKPIs } from "./FindingsBlock.jsx";
 import DatasetSummaryCard from "./DatasetSummaryCard.jsx";
-import { Database, User, TrendingUp, SlidersHorizontal, Inbox, Loader2 } from "lucide-react";
+import { Database, User, TrendingUp, SlidersHorizontal, Inbox, Loader2, AlertTriangle, RotateCw } from "lucide-react";
 
-export default function MessageBubble({ msg, profile, datasetName, onOpenTechnical }) {
+export default function MessageBubble({ msg, profile, datasetName, onOpenTechnical, onRetry, canRetry = true }) {
   const isUser = msg.role === "user";
 
   // Findings are derived from the result's shape only — never from column names.
@@ -107,8 +107,28 @@ export default function MessageBubble({ msg, profile, datasetName, onOpenTechnic
               </div>
             )}
 
-            {/* Error */}
-            {msg.error && <p style={styles.error}>{msg.error}</p>}
+            {/* Error — stated as a failed turn, with the question offered back
+                for another attempt rather than requiring a retype (plan §13.8). */}
+            {msg.error && (
+              <div style={styles.errorBox}>
+                <AlertTriangle size={14} color="#d94f4f" style={styles.errorIcon} />
+                <div style={styles.errorBody}>
+                  <span style={styles.errorTitle}>That question didn’t complete.</span>
+                  <span style={styles.errorDetail}>{msg.error}</span>
+                  {msg.retryQuery && onRetry && (
+                    <button
+                      style={{ ...styles.retryBtn, ...(canRetry ? {} : styles.retryDisabled) }}
+                      onClick={() => onRetry(msg)}
+                      disabled={!canRetry}
+                      title={`Ask again: ${msg.retryQuery}`}
+                    >
+                      <RotateCw size={12} />
+                      <span>Try again</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* ── 5. Technical detail: last, and behind one click (plan §6, §7) ── */}
             {msg.sql && (
@@ -226,5 +246,37 @@ const styles = {
     color: "var(--text-soft)",
     lineHeight: 1.6,
   },
-  error: { color: "#d94f4f", fontSize: 13 },
+  errorBox: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 8,
+    background: "rgba(217, 79, 79, 0.06)",
+    border: "1px solid rgba(217, 79, 79, 0.25)",
+    borderRadius: 8,
+    padding: "10px 12px",
+  },
+  errorIcon: { flexShrink: 0, marginTop: 2 },
+  errorBody: { display: "flex", flexDirection: "column", gap: 6, minWidth: 0 },
+  errorTitle: { fontSize: 13, fontWeight: 600, color: "#d94f4f" },
+  errorDetail: {
+    fontSize: 12,
+    color: "var(--text-soft)",
+    lineHeight: 1.6,
+    wordBreak: "break-word",
+  },
+  retryBtn: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    background: "var(--surface)",
+    border: "1px solid var(--border)",
+    color: "var(--text)",
+    borderRadius: 6,
+    padding: "3px 9px",
+    fontSize: 11,
+    fontWeight: 500,
+    cursor: "pointer",
+    alignSelf: "flex-start",
+  },
+  retryDisabled: { opacity: 0.45, cursor: "not-allowed" },
 };

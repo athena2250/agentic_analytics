@@ -47,23 +47,30 @@ export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
     );
   };
 
-  const send = async () => {
-    const q = input.trim();
-    if (!q || loading) return;
+  // Replaces the assistant message with this id, or appends it if it isn't in
+  // the list yet. Functional so a retry lands on the conversation as it stands
+  // when the request returns, not as it stood when the retry was clicked.
+  const putMessage = (id, next) =>
+    onUpdate((s) => ({
+      messages: s.messages.some((m) => m.id === id)
+        ? s.messages.map((m) => (m.id === id ? next : m))
+        : [...s.messages, next],
+    }));
 
-    const userMsg = { id: Date.now(), role: "user", content: q };
-    const thinkingId = Date.now() + 1;
-    const thinkingMsg = { id: thinkingId, role: "assistant", loading: true };
-
-    onUpdate({ messages: [...session.messages, userMsg, thinkingMsg] });
-    setInput("");
+  // One conversational turn, addressed by message id. A retry reruns this with
+  // the same id, so the failed answer is replaced in place rather than the
+  // question being asked twice (plan §13.8).
+  const runTurn = async (question, msgId) => {
     setLoading(true);
+    // `retryQuery` rides along from the start so the message can be retried
+    // even if the failure arrives without it in scope.
+    putMessage(msgId, { id: msgId, role: "assistant", loading: true, retryQuery: question });
 
     const startedAt = performance.now();
     try {
-      const data = await runQuery(session.id, q);
+      const data = await runQuery(session.id, question);
       const aiMsg = {
-        id: thinkingId,
+        id: msgId,
         role: "assistant",
         loading: false,
         sql: data.sql,
@@ -78,21 +85,31 @@ export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
         durationMs: performance.now() - startedAt,
         text: null,
       };
-      onUpdate({ messages: [...session.messages, userMsg, aiMsg] });
+      putMessage(msgId, aiMsg);
       // Load the drawer with this answer's detail, but leave it collapsed:
       // the answer is primary, technical detail is on demand (plan §6).
       if (data.sql) openTechnical(aiMsg, false);
     } catch (e) {
-      onUpdate({
-        messages: [
-          ...session.messages,
-          userMsg,
-          { id: thinkingId, role: "assistant", loading: false, error: e.message },
-        ],
+      putMessage(msgId, {
+        id: msgId,
+        role: "assistant",
+        loading: false,
+        error: e.message,
+        retryQuery: question,
       });
     } finally {
       setLoading(false);
     }
+  };
+
+  const send = () => {
+    const q = input.trim();
+    if (!q || loading) return;
+
+    const userId = Date.now();
+    onUpdate((s) => ({ messages: [...s.messages, { id: userId, role: "user", content: q }] }));
+    setInput("");
+    runTurn(q, userId + 1);
   };
 
   const handleKey = (e) => {
@@ -121,6 +138,8 @@ export default function ChatWindow({ session, onUpdate, onOpenTechnical }) {
             profile={session.profile}
             datasetName={session.name}
             onOpenTechnical={openTechnical}
+            onRetry={(m) => runTurn(m.retryQuery, m.id)}
+            canRetry={!loading}
           />
         ))}
         {/* Suggestion chips — derived from the dataset profile, shown until the
