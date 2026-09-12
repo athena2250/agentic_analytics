@@ -36,7 +36,6 @@ const styles = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    height: "100vh",
     background: "var(--bg)",
   },
   content: {

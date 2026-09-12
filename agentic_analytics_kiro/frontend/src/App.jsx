@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
-import Sidebar from "./components/Sidebar.jsx";
+import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar.jsx";
+import AppSidebar from "./components/layout/AppSidebar.jsx";
 import Workspace from "./components/Workspace.jsx";
 import EmptyState from "./components/EmptyState.jsx";
 import UploadIntentDialog from "./components/UploadIntentDialog.jsx";
 import { createSession, uploadFiles, getProfile, getRelationships, getFormats } from "./api.js";
-import { centerColumn } from "./styles.js";
 
 // A session holding a dataset takes that dataset's name, so the sessions list
 // reads as a list of datasets (plan §13.11). User renames always win.
@@ -183,9 +183,9 @@ export default function App() {
   }, [pendingUpload, startSession, performUpload]);
 
   return (
-    <div style={styles.root}>
+    <SidebarProvider className="h-screen overflow-hidden">
       {/* ── Sidebar: dataset, schema, sessions (plan §7) ── */}
-      <Sidebar
+      <AppSidebar
         sessions={sessions}
         activeId={activeId}
         activeSession={active}
@@ -199,28 +199,29 @@ export default function App() {
         formats={formats}
       />
 
-      {/* ── Onboarding view until the active session holds a dataset, then the
-             workspace view: conversation + technical details drawer (plan §7). ── */}
-      {!active ? (
-        <div style={styles.main}>
-          <div style={styles.empty}>Select or start a session</div>
-        </div>
-      ) : Object.keys(active.tables).length === 0 ? (
-        <div style={styles.main}>
+      <SidebarInset className="overflow-hidden">
+        {/* ── Onboarding view until the active session holds a dataset, then
+               the workspace view: conversation + technical details sheet
+               (plan §7). ── */}
+        {!active ? (
+          <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+            Select or start a session
+          </div>
+        ) : Object.keys(active.tables).length === 0 ? (
           <EmptyState
             onUpload={handleUpload}
             uploadStage={uploadStage}
             uploadError={uploadError}
             formats={formats}
           />
-        </div>
-      ) : (
-        <Workspace
-          key={active.id}
-          session={active}
-          onUpdate={(patch) => patchSession(active.id, patch)}
-        />
-      )}
+        ) : (
+          <Workspace
+            key={active.id}
+            session={active}
+            onUpdate={(patch) => patchSession(active.id, patch)}
+          />
+        )}
+      </SidebarInset>
 
       {pendingUpload && (
         <UploadIntentDialog
@@ -231,24 +232,6 @@ export default function App() {
           onCancel={() => setPendingUpload(null)}
         />
       )}
-    </div>
+    </SidebarProvider>
   );
 }
-
-const styles = {
-  root: {
-    display: "flex",
-    height: "100vh",
-    overflow: "hidden",
-    background: "var(--bg)",
-  },
-  main: centerColumn,
-  empty: {
-    flex: 1,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    color: "var(--text-muted)",
-    fontSize: 14,
-  },
-};

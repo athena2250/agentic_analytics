@@ -1,6 +1,14 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/inter";
+
+@custom-variant dark (&:is(.dark *));
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
+  /* --- Brand palette (source of truth) ----------------------------------- */
   --bg: #f7f7f5;
   --surface: #ffffff;
   --surface2: #f0efed;
@@ -45,8 +53,46 @@
   /* Spacing rhythm (§12): 4 / 6 / 8 / 12 / 14 / 20px. Inline styles use the
      raw numbers; new components reuse these same steps. */
 
-  --font: "Inter", system-ui, sans-serif;
+  --font: "Inter Variable", "Inter", system-ui, sans-serif;
   --mono: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+
+  /* --- shadcn/ui tokens, derived from the brand palette above (not the
+         Nova preset's generic grayscale defaults) so the visual identity
+         carries over deliberately. --------------------------------------- */
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card: var(--surface);
+  --card-foreground: var(--text);
+  --popover: var(--surface);
+  --popover-foreground: var(--text);
+  --primary: var(--accent);
+  --primary-foreground: var(--on-accent);
+  --secondary: var(--surface3);
+  --secondary-foreground: var(--text);
+  --muted: var(--surface2);
+  --muted-foreground: var(--text-muted);
+  /* shadcn's "accent" role is a hover/highlight tint, distinct from our
+     brand --accent (mapped to --primary above). */
+  --accent-role: var(--accent-soft);
+  --accent-foreground: var(--text);
+  --destructive: var(--danger);
+  --destructive-foreground: #ffffff;
+  --input: var(--border2);
+  --ring: var(--accent);
+  --chart-1: #7c6af7;
+  --chart-2: #2fb8a6;
+  --chart-3: #f0a94e;
+  --chart-4: #e0678f;
+  --chart-5: #5b7fd9;
+  --radius: 0.625rem;
+  --sidebar: var(--surface2);
+  --sidebar-foreground: var(--text);
+  --sidebar-primary: var(--accent);
+  --sidebar-primary-foreground: var(--on-accent);
+  --sidebar-accent: var(--accent-soft);
+  --sidebar-accent-foreground: var(--text);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--accent);
 }
 
 html, body, #root { height: 100%; overflow: hidden; }
@@ -85,3 +131,101 @@ input, textarea { font-family: var(--font); }
 
 details > summary { list-style: none; }
 details > summary::-webkit-details-marker { display: none; }
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: "Inter Variable", "Inter", system-ui, sans-serif;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent-role);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* Dark mode: base values wired now so nothing renders unresolved; the full
+   design pass (contrast tuning, per-block review) is Phase 6. */
+.dark {
+  --bg: #17161c;
+  --surface: #1e1d24;
+  --surface2: #26252d;
+  --surface3: #2f2e37;
+  --border: #34333c;
+  --border2: #403f49;
+  --text: #f0f0ef;
+  --text-muted: #9a99a3;
+  --text-soft: #b8b7c0;
+  --accent: #9182ff;
+  --accent-soft: rgba(145,130,255,0.16);
+  --accent-border: rgba(145,130,255,0.35);
+  --on-accent: #17161c;
+  --danger: #e2685f;
+  --danger-soft: rgba(226,104,95,0.12);
+  --danger-border: rgba(226,104,95,0.3);
+  --success: #5fc46a;
+  --scrim: rgba(0,0,0,0.5);
+
+  --secondary-foreground: var(--text);
+  --muted-foreground: var(--text-muted);
+  --accent-foreground: var(--text);
+  --destructive-foreground: #ffffff;
+  --input: var(--border2);
+  --ring: var(--accent);
+  --chart-1: #9182ff;
+  --chart-2: #3fd4c0;
+  --chart-3: #f4bd6f;
+  --chart-4: #ec83a8;
+  --chart-5: #7f9bec;
+  --sidebar: var(--surface2);
+  --sidebar-foreground: var(--text);
+  --sidebar-primary: var(--accent);
+  --sidebar-primary-foreground: var(--on-accent);
+  --sidebar-accent: var(--accent-soft);
+  --sidebar-accent-foreground: var(--text);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--accent);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}

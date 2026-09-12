@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import ChatWindow from "./ChatWindow.jsx";
-import CodePanel from "./CodePanel.jsx";
+import CodeSheet from "./layout/CodeSheet.jsx";
+import AppHeader from "./layout/AppHeader.jsx";
 import DatasetReadyBanner from "./DatasetReadyBanner.jsx";
 import { exportLast } from "../api.js";
 import { centerColumn } from "../styles.js";
@@ -38,6 +39,12 @@ export default function Workspace({ session, onUpdate }) {
 
   return (
     <>
+      <AppHeader
+        session={session}
+        onOpenTechnical={() => setOpen(true)}
+        technicalAvailable={Boolean(sql)}
+      />
+
       <div style={styles.conversation}>
         {/* Announces the profile once per load, above the conversation rather
             than inside it: the numbers describe the dataset as it stands now,
@@ -46,14 +53,14 @@ export default function Workspace({ session, onUpdate }) {
         <ChatWindow session={session} onUpdate={onUpdate} onOpenTechnical={openTechnical} />
       </div>
 
-      {/* GET /export re-runs the session's *last* query, so the drawer is told
+      {/* GET /export re-runs the session's *last* query, so the sheet is told
           which SQL that is: export stays available only while the answer on
           screen is the one the file would contain (plan §13.12). */}
-      <CodePanel
+      <CodeSheet
         sql={sql}
         meta={meta}
         open={open}
-        onToggle={() => setOpen((v) => !v)}
+        onOpenChange={setOpen}
         onSQLChange={setSQL}
         onExport={() => exportLast(session.id)}
         latestSQL={latestSQL}
@@ -64,5 +71,7 @@ export default function Workspace({ session, onUpdate }) {
 }
 
 const styles = {
-  conversation: centerColumn,
+  // The left/right borders made sense between two flanking panels; the
+  // sidebar now provides its own boundary and the SQL panel is an overlay.
+  conversation: { ...centerColumn, borderLeft: "none", borderRight: "none" },
 };
